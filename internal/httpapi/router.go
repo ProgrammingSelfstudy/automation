@@ -8,6 +8,7 @@ import (
 	"interface-load-test/internal/accountstore"
 	"interface-load-test/internal/logevent"
 	"interface-load-test/internal/resultstore"
+	"interface-load-test/internal/scenariostore"
 	"interface-load-test/internal/task"
 	"interface-load-test/internal/taskmanager"
 	"interface-load-test/internal/wsapi"
@@ -31,6 +32,7 @@ type Dependencies struct {
 	TaskManager    TaskManager
 	AccountStore   accountstore.Store
 	ResultStore    ResultStore
+	ScenarioStore  scenariostore.Store
 	Hub            *logevent.Hub
 	AllowedOrigins []string
 }
@@ -46,6 +48,8 @@ func NewRouter(deps Dependencies) http.Handler {
 
 	mux.HandleFunc("POST /api/accounts", h.createAccount)
 	mux.HandleFunc("GET /api/accounts", h.listAccounts)
+	mux.HandleFunc("POST /api/scenarios", h.createScenario)
+	mux.HandleFunc("GET /api/scenarios", h.listScenarios)
 	mux.HandleFunc("POST /api/tasks", h.createTask)
 	mux.HandleFunc("GET /api/tasks", h.listTasks)
 	mux.HandleFunc("GET /api/tasks/{id}", h.getTask)

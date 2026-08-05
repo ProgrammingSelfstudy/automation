@@ -10,8 +10,9 @@ type ScenarioStepEditorProps = {
   onStepsChange: (next: ScenarioStep[]) => void
   formula: string
   onFormulaChange: (next: string) => void
-  perAccountCount: number
-  onPerAccountCountChange: (next: number) => void
+  perAccountCount?: number
+  onPerAccountCountChange?: (next: number) => void
+  showPerAccountCount?: boolean
 }
 
 function newStep(index: number): ScenarioStep {
@@ -30,8 +31,9 @@ export default function ScenarioStepEditor({
   onStepsChange,
   formula,
   onFormulaChange,
-  perAccountCount,
+  perAccountCount = 1,
   onPerAccountCountChange,
+  showPerAccountCount = true,
 }: ScenarioStepEditorProps) {
   function updateStep(index: number, patch: Partial<ScenarioStep>) {
     onStepsChange(steps.map((step, stepIndex) => (stepIndex === index ? { ...step, ...patch } : step)))
@@ -47,7 +49,7 @@ export default function ScenarioStepEditor({
 
   return (
     <div className="space-y-5">
-      <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_220px]">
+      <div className={showPerAccountCount ? 'grid gap-4 sm:grid-cols-[minmax(0,1fr)_220px]' : 'grid gap-4'}>
         <label className="space-y-1">
           <span className="field-label">formula</span>
           <input
@@ -56,16 +58,18 @@ export default function ScenarioStepEditor({
             onChange={(event) => onFormulaChange(event.target.value)}
           />
         </label>
-        <label className="space-y-1">
-          <span className="field-label">per_account_count</span>
-          <input
-            className="input"
-            min={1}
-            type="number"
-            value={perAccountCount}
-            onChange={(event) => onPerAccountCountChange(Number(event.target.value))}
-          />
-        </label>
+        {showPerAccountCount ? (
+          <label className="space-y-1">
+            <span className="field-label">per_account_count</span>
+            <input
+              className="input"
+              min={1}
+              type="number"
+              value={perAccountCount}
+              onChange={(event) => onPerAccountCountChange?.(Number(event.target.value))}
+            />
+          </label>
+        ) : null}
       </div>
 
       <div className="space-y-4">

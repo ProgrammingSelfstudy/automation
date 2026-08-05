@@ -12,6 +12,7 @@ import (
 	"interface-load-test/internal/loadtest"
 	"interface-load-test/internal/logevent"
 	"interface-load-test/internal/resultstore"
+	"interface-load-test/internal/scenariostore"
 	"interface-load-test/internal/task"
 	"interface-load-test/internal/taskmanager"
 )
@@ -35,6 +36,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("create task store: %v", err)
 	}
+	scenarioStore, err := scenariostore.NewMySQLStore(dsn)
+	if err != nil {
+		log.Fatalf("create scenario store: %v", err)
+	}
 
 	hub := logevent.NewHub()
 	registry := task.NewModuleRegistry()
@@ -45,6 +50,7 @@ func main() {
 		TaskManager:    manager,
 		AccountStore:   accountStore,
 		ResultStore:    resultStore,
+		ScenarioStore:  scenarioStore,
 		Hub:            hub,
 		AllowedOrigins: csvEnvOrDefault("ALLOWED_ORIGINS", "http://localhost:5173"),
 	})

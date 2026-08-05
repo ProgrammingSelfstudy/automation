@@ -1,14 +1,16 @@
-import { Activity, ListChecks, Plus, Users } from 'lucide-react'
+import { Activity, BookOpen, ListChecks, Plus, Users } from 'lucide-react'
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
 
 import AccountsPage from './pages/AccountsPage'
 import CreateTaskPage from './pages/CreateTaskPage'
+import ScenariosPage from './pages/ScenariosPage'
 import TaskDetailPage from './pages/TaskDetailPage'
 import TaskListPage from './pages/TaskListPage'
 
 const navItems = [
   { to: '/', label: '任务', icon: ListChecks },
   { to: '/accounts', label: '账号', icon: Users },
+  { to: '/scenarios', label: '场景', icon: BookOpen },
   { to: '/tasks/new', label: '新建', icon: Plus },
 ]
 
@@ -57,6 +59,7 @@ export default function App() {
         <Routes>
           <Route element={<TaskListPage />} path="/" />
           <Route element={<AccountsPage />} path="/accounts" />
+          <Route element={<ScenariosPage />} path="/scenarios" />
           <Route element={<CreateTaskPage />} path="/tasks/new" />
           <Route element={<TaskDetailPage />} path="/tasks/:id" />
           <Route element={<Navigate replace to="/" />} path="*" />

@@ -18,6 +18,13 @@ export type Scenario = {
   formula: string
 }
 
+export type ScenarioResponse = {
+  id: string
+  name: string
+  definition: Scenario
+  created_at: string
+}
+
 export type LoadTestConfig = {
   scenario: Scenario
   per_account_count: number
@@ -204,6 +211,17 @@ export function listAccounts(groupID: string) {
 
 export function createAccount(payload: CreateAccountRequest) {
   return request<AccountResponse>('/api/accounts', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function listScenarios() {
+  return request<ScenarioResponse[]>('/api/scenarios')
+}
+
+export function createScenario(payload: { name: string; definition: Scenario }) {
+  return request<ScenarioResponse>('/api/scenarios', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
