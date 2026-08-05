@@ -58,8 +58,18 @@ type httpClientDoer struct {
 }
 
 // NewHTTPClient returns a standard-library HTTPDoer for production use.
+//
+// MaxIdleConnsPerHost is raised well above the net/http default of 2 so that
+// concurrent load-test traffic against the same host reuses connections
+// instead of repeatedly paying TCP/TLS handshake cost. MaxConnsPerHost is
+// left unlimited so this pool never caps how many requests can be in flight.
 func NewHTTPClient(timeout time.Duration) HTTPDoer {
-	client := &http.Client{}
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+	}
+	client := &http.Client{Transport: transport}
 	if timeout > 0 {
 		client.Timeout = timeout
 	}
