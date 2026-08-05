@@ -1,0 +1,5 @@
+.env
+bin/
+.idea/
+.claude/
+.DS_Store

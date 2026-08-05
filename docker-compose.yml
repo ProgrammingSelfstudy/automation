@@ -1,0 +1,26 @@
+name: interface-load-test
+
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-devpassword}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-loadtest}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # 三个包各自的建表语句，容器首次启动（数据目录为空）时按文件名顺序自动执行一次。
+      # 之后再改 schema.sql 不会自动生效，需要 `make db-reset` 清掉 volume 重新初始化。
+      - ./internal/accountstore/schema.sql:/docker-entrypoint-initdb.d/01-account.sql:ro
+      - ./internal/resultstore/schema.sql:/docker-entrypoint-initdb.d/02-task_result.sql:ro
+      - ./internal/taskmanager/schema.sql:/docker-entrypoint-initdb.d/03-task.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-devpassword}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mysql-data:
