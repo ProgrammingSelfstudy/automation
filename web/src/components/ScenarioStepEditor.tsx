@@ -1,9 +1,7 @@
 import { Plus, Trash2 } from 'lucide-react'
 
 import type { ScenarioStep } from '../api/client'
-import KeyValueEditor from './KeyValueEditor'
-
-const METHODS: ScenarioStep['method'][] = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
+import StepFields from './StepFields'
 
 type ScenarioStepEditorProps = {
   steps: ScenarioStep[]
@@ -17,7 +15,7 @@ type ScenarioStepEditorProps = {
 
 function newStep(index: number): ScenarioStep {
   return {
-    name: `step-${index + 1}`,
+    name: `步骤-${index + 1}`,
     method: 'GET',
     url: '',
     body_tpl: '',
@@ -51,7 +49,7 @@ export default function ScenarioStepEditor({
     <div className="space-y-5">
       <div className={showPerAccountCount ? 'grid gap-4 sm:grid-cols-[minmax(0,1fr)_220px]' : 'grid gap-4'}>
         <label className="space-y-1">
-          <span className="field-label">formula</span>
+          <span className="field-label">公式</span>
           <input
             className="input"
             value={formula}
@@ -60,7 +58,7 @@ export default function ScenarioStepEditor({
         </label>
         {showPerAccountCount ? (
           <label className="space-y-1">
-            <span className="field-label">per_account_count</span>
+            <span className="field-label">每账号执行次数</span>
             <input
               className="input"
               min={1}
@@ -76,12 +74,12 @@ export default function ScenarioStepEditor({
         {steps.map((step, index) => (
           <section className="rounded-lg border border-slate-200 bg-white" key={index}>
             <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-              <div className="text-sm font-semibold text-slate-900">Step {index + 1}</div>
+              <div className="text-sm font-semibold text-slate-900">步骤 {index + 1}</div>
               <button
-                aria-label="删除 Step"
+                aria-label="删除步骤"
                 className="icon-btn"
                 disabled={steps.length <= 1}
-                title="删除 Step"
+                title="删除步骤"
                 type="button"
                 onClick={() => removeStep(index)}
               >
@@ -89,70 +87,8 @@ export default function ScenarioStepEditor({
               </button>
             </div>
 
-            <div className="grid gap-4 p-4">
-              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_140px_minmax(0,2fr)]">
-                <label className="space-y-1">
-                  <span className="field-label">name</span>
-                  <input
-                    className="input"
-                    value={step.name}
-                    onChange={(event) => updateStep(index, { name: event.target.value })}
-                  />
-                </label>
-                <label className="space-y-1">
-                  <span className="field-label">method</span>
-                  <select
-                    className="input"
-                    value={step.method}
-                    onChange={(event) =>
-                      updateStep(index, { method: event.target.value as ScenarioStep['method'] })
-                    }
-                  >
-                    {METHODS.map((method) => (
-                      <option key={method} value={method}>
-                        {method}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="space-y-1">
-                  <span className="field-label">url</span>
-                  <input
-                    className="input"
-                    value={step.url}
-                    onChange={(event) => updateStep(index, { url: event.target.value })}
-                  />
-                </label>
-              </div>
-
-              <label className="space-y-1">
-                <span className="field-label">body_tpl</span>
-                <textarea
-                  className="textarea"
-                  value={step.body_tpl}
-                  onChange={(event) => updateStep(index, { body_tpl: event.target.value })}
-                />
-              </label>
-
-              <div className="grid gap-4 lg:grid-cols-2">
-                <div className="space-y-2">
-                  <div className="field-label">headers</div>
-                  <KeyValueEditor
-                    keyPlaceholder="header"
-                    value={step.headers}
-                    onChange={(headers) => updateStep(index, { headers })}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <div className="field-label">extract</div>
-                  <KeyValueEditor
-                    keyPlaceholder="name"
-                    valuePlaceholder="gjson path"
-                    value={step.extract}
-                    onChange={(extract) => updateStep(index, { extract })}
-                  />
-                </div>
-              </div>
+            <div className="p-4">
+              <StepFields step={step} onChange={(next) => updateStep(index, next)} />
             </div>
           </section>
         ))}
@@ -160,7 +96,7 @@ export default function ScenarioStepEditor({
 
       <button className="btn btn-secondary" type="button" onClick={addStep}>
         <Plus size={16} />
-        添加 Step
+        添加步骤
       </button>
     </div>
   )

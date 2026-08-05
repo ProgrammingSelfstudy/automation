@@ -6,10 +6,18 @@ import { Link, useParams } from 'react-router-dom'
 import { cancelTask, exportTaskURL, getTask, getTaskResults } from '../api/client'
 import type { AccountResultsResponse } from '../api/client'
 import StatusBadge from '../components/StatusBadge'
+import type { ProgressConnectionState } from '../hooks/useTaskProgress'
 import useTaskProgress from '../hooks/useTaskProgress'
-import { formatDateTime, formatNumber, getErrorMessage } from '../utils/format'
+import { formatBoolean, formatDateTime, formatModuleType, formatNumber, getErrorMessage } from '../utils/format'
 
 const EMPTY_GROUPS: AccountResultsResponse[] = []
+const PROGRESS_STATE_LABELS: Record<ProgressConnectionState, string> = {
+  idle: '未连接',
+  connecting: '连接中',
+  open: '已连接',
+  closed: '已断开',
+  error: '连接异常',
+}
 
 export default function TaskDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -100,9 +108,9 @@ export default function TaskDetailPage() {
         <div className="toolbar">
           <div className="flex items-center gap-3">
             {task ? <StatusBadge status={task.status} /> : null}
-            <div className="text-sm text-slate-500">{task?.module_type || 'load_test'}</div>
+            <div className="text-sm text-slate-500">{formatModuleType(task?.module_type || 'load_test')}</div>
           </div>
-          <Link className="text-sm font-medium text-blue-700 hover:text-blue-800" to="/">
+          <Link className="text-sm font-medium text-blue-700 hover:text-blue-800" to="/runs">
             任务列表
           </Link>
         </div>
@@ -134,7 +142,7 @@ export default function TaskDetailPage() {
             <h3 className="text-base font-semibold text-slate-950">实时事件流</h3>
             <div className="mt-1 flex items-center gap-2 text-sm text-slate-500">
               {progress.state === 'open' ? <Wifi size={15} /> : <WifiOff size={15} />}
-              {progress.state}
+              {PROGRESS_STATE_LABELS[progress.state]}
             </div>
           </div>
           <div className="text-sm text-slate-500">{formatNumber(progress.events.length)} / 500</div>
@@ -159,9 +167,9 @@ export default function TaskDetailPage() {
                   <div>#{event.seq_no}</div>
                   <div className="min-w-0 truncate">{event.step_name}</div>
                   <div className={event.success ? 'text-emerald-700' : 'text-red-700'}>
-                    {event.success ? 'success' : 'failed'}
+                    {event.success ? '成功' : '失败'}
                   </div>
-                  <div>{formatNumber(event.cost_ms)} ms</div>
+                  <div>{formatNumber(event.cost_ms)} 毫秒</div>
                   {event.err_msg ? <div className="text-red-700 sm:col-span-6">{event.err_msg}</div> : null}
                 </div>
               ))}
@@ -204,7 +212,7 @@ export default function TaskDetailPage() {
                   <th>时间</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 bg-white">
+              <tbody className="divide-y divide-white/50 bg-white/35">
                 {resultsQuery.isLoading ? (
                   <tr>
                     <td className="text-slate-500" colSpan={6}>
@@ -221,11 +229,11 @@ export default function TaskDetailPage() {
                   selectedGroup.rows.map((row) => (
                     <tr key={row.id}>
                       <td>#{row.seq_no}</td>
-                      <td>{formatNumber(row.cost_ms)} ms</td>
+                      <td>{formatNumber(row.cost_ms)} 毫秒</td>
                       <td>{row.formula_result}</td>
                       <td>
                         <span className={row.success ? 'text-emerald-700' : 'text-red-700'}>
-                          {row.success ? 'true' : 'false'}
+                          {formatBoolean(row.success)}
                         </span>
                       </td>
                       <td className="max-w-md truncate">{row.err_msg || '-'}</td>

@@ -19,6 +19,7 @@ import (
 
 const (
 	aes256KeySize = 32
+	maxGroupIDLen = 36 // matches account.group_id VARCHAR(36) in schema.sql
 
 	insertAccountSQL = `INSERT INTO account (id, group_id, username, password, extra, enabled) VALUES (?, ?, ?, ?, ?, ?)`
 	getAccountSQL    = `SELECT id, group_id, username, password, extra, enabled, created_at FROM account WHERE id = ?`
@@ -28,6 +29,7 @@ const (
 var (
 	ErrNotFound         = errors.New("account not found")
 	ErrGroupIDRequired  = errors.New("group id is required")
+	ErrGroupIDTooLong   = fmt.Errorf("group id must be %d characters or fewer", maxGroupIDLen)
 	ErrUsernameRequired = errors.New("username is required")
 	ErrPasswordRequired = errors.New("password is required")
 	ErrInvalidKeyLength = errors.New("account encryption key must be 32 bytes")
@@ -105,6 +107,9 @@ func NewMySQLStore(dsn string, key []byte) (*SQLStore, error) {
 func (s *SQLStore) Create(ctx context.Context, acc *Account) error {
 	if acc.GroupID == "" {
 		return ErrGroupIDRequired
+	}
+	if len([]rune(acc.GroupID)) > maxGroupIDLen {
+		return ErrGroupIDTooLong
 	}
 	if acc.Username == "" {
 		return ErrUsernameRequired

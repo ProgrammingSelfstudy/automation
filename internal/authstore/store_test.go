@@ -248,6 +248,37 @@ func TestGetSessionMapsRow(t *testing.T) {
 	assertAuthExpectations(t, mock)
 }
 
+func TestRecordFailedLoginAttempt(t *testing.T) {
+	db, mock := newAuthMockDB(t)
+	store := NewSQLStore(db)
+	mock.ExpectExec(regexp.QuoteMeta(insertLoginAttemptSQL)).
+		WithArgs("203.0.113.10").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	if err := store.RecordFailedLoginAttempt(context.Background(), "203.0.113.10"); err != nil {
+		t.Fatalf("RecordFailedLoginAttempt() error = %v", err)
+	}
+	assertAuthExpectations(t, mock)
+}
+
+func TestCountRecentFailedLoginAttempts(t *testing.T) {
+	db, mock := newAuthMockDB(t)
+	store := NewSQLStore(db)
+	since := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	mock.ExpectQuery(regexp.QuoteMeta(countLoginAttemptsSQL)).
+		WithArgs("203.0.113.10", since).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(4))
+
+	count, err := store.CountRecentFailedLoginAttempts(context.Background(), "203.0.113.10", since)
+	if err != nil {
+		t.Fatalf("CountRecentFailedLoginAttempts() error = %v", err)
+	}
+	if count != 4 {
+		t.Fatalf("count = %d, want 4", count)
+	}
+	assertAuthExpectations(t, mock)
+}
+
 type anyNonEmptyAuthString struct{}
 
 func (anyNonEmptyAuthString) Match(value driver.Value) bool {

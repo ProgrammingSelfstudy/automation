@@ -2,7 +2,7 @@ import type { Scenario, ScenarioStep } from '../api/client'
 
 export function newScenarioStep(index: number): ScenarioStep {
   return {
-    name: `step-${index + 1}`,
+    name: `步骤-${index + 1}`,
     method: 'GET',
     url: '',
     body_tpl: '',

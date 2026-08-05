@@ -5,7 +5,7 @@
 :root {
   font-family: Inter, ui-sans-serif, system-ui, "Segoe UI", Roboto, Arial, sans-serif;
   color: #172033;
-  background: #f7f8fb;
+  background: #f6fbff;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -21,6 +21,7 @@ body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
+  background: #f6fbff;
 }
 
 button,
@@ -38,12 +39,51 @@ textarea:disabled {
 }
 
 @layer components {
+  .app-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    overflow: hidden;
+    pointer-events: none;
+    background:
+      linear-gradient(116deg, rgba(232, 255, 249, 0.82) 0%, rgba(255, 255, 255, 0.9) 34%, rgba(242, 247, 255, 0.92) 72%, rgba(247, 244, 255, 0.84) 100%),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.78));
+  }
+
+  .app-backdrop::before {
+    position: absolute;
+    inset: -12% -8%;
+    content: "";
+    background:
+      radial-gradient(ellipse 36% 24% at 18% 18%, rgba(53, 226, 199, 0.2), transparent 68%),
+      radial-gradient(ellipse 30% 24% at 78% 18%, rgba(52, 145, 255, 0.18), transparent 70%),
+      radial-gradient(ellipse 34% 26% at 82% 76%, rgba(159, 136, 255, 0.16), transparent 70%),
+      radial-gradient(ellipse 28% 22% at 22% 76%, rgba(255, 200, 49, 0.13), transparent 72%);
+    filter: blur(18px);
+  }
+
+  .app-backdrop::after {
+    position: absolute;
+    inset: 0;
+    content: "";
+    opacity: 0.36;
+    background-image:
+      linear-gradient(rgba(22, 119, 255, 0.08) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(22, 119, 255, 0.07) 1px, transparent 1px);
+    background-size: 28px 28px;
+    mask-image: linear-gradient(90deg, transparent, black 22%, black 78%, transparent);
+  }
+
   .page-shell {
-    @apply mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8;
+    @apply flex w-full flex-col gap-5;
+  }
+
+  .glass-panel {
+    @apply rounded-xl border border-white/60 bg-white/60 shadow-xl shadow-blue-900/5 backdrop-blur-xl;
   }
 
   .panel {
-    @apply rounded-lg border border-slate-200 bg-white shadow-sm;
+    @apply rounded-xl border border-white/60 bg-white/65 shadow-xl shadow-blue-900/5 backdrop-blur-xl;
   }
 
   .panel-body {
@@ -51,7 +91,7 @@ textarea:disabled {
   }
 
   .toolbar {
-    @apply flex flex-col gap-3 border-b border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between;
+    @apply flex flex-col gap-3 border-b border-white/50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between;
   }
 
   .field-label {
@@ -59,11 +99,11 @@ textarea:disabled {
   }
 
   .input {
-    @apply h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100;
+    @apply h-10 w-full rounded-md border border-white/60 bg-white/70 px-3 text-sm text-slate-900 shadow-sm outline-none backdrop-blur-xl transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100;
   }
 
   .textarea {
-    @apply min-h-24 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100;
+    @apply min-h-24 w-full rounded-md border border-white/60 bg-white/70 px-3 py-2 text-sm text-slate-900 shadow-sm outline-none backdrop-blur-xl transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100;
   }
 
   .btn {
@@ -71,11 +111,11 @@ textarea:disabled {
   }
 
   .btn-primary {
-    @apply bg-blue-600 text-white hover:bg-blue-700;
+    @apply bg-gradient-to-r from-blue-600 to-cyan-500 text-white shadow-lg shadow-blue-500/20 hover:from-blue-700 hover:to-cyan-600;
   }
 
   .btn-secondary {
-    @apply border-slate-300 bg-white text-slate-700 hover:bg-slate-50;
+    @apply border-white/60 bg-white/60 text-slate-700 shadow-sm backdrop-blur-xl hover:bg-white/80;
   }
 
   .btn-danger {
@@ -83,7 +123,7 @@ textarea:disabled {
   }
 
   .icon-btn {
-    @apply inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:opacity-60;
+    @apply inline-flex h-9 w-9 items-center justify-center rounded-md border border-white/60 bg-white/60 text-slate-600 shadow-sm backdrop-blur-xl transition hover:bg-white/80 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:opacity-60;
   }
 
   .table-wrap {
@@ -91,11 +131,11 @@ textarea:disabled {
   }
 
   .data-table {
-    @apply min-w-full divide-y divide-slate-200 text-left text-sm;
+    @apply min-w-full divide-y divide-white/50 text-left text-sm;
   }
 
   .data-table th {
-    @apply whitespace-nowrap bg-slate-50 px-4 py-3 text-xs font-semibold uppercase text-slate-500;
+    @apply whitespace-nowrap bg-white/45 px-4 py-3 text-xs font-semibold uppercase text-slate-500;
   }
 
   .data-table td {

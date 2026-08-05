@@ -25,6 +25,13 @@ export type ScenarioResponse = {
   created_at: string
 }
 
+export type InterfaceResponse = {
+  id: string
+  name: string
+  step: ScenarioStep
+  created_at: string
+}
+
 export type AuthUser = {
   id: string
   username: string
@@ -147,7 +154,7 @@ function buildQuery(params: Record<string, QueryValue>): string {
 }
 
 export async function extractErrorMessage(response: Response): Promise<string> {
-  const fallback = `HTTP ${response.status}`
+  const fallback = `请求失败（状态码 ${response.status}）`
   const contentType = response.headers.get('content-type') || ''
   if (contentType.includes('application/json')) {
     try {
@@ -231,6 +238,17 @@ export function listAccounts(groupID: string) {
 
 export function createAccount(payload: CreateAccountRequest) {
   return request<AccountResponse>('/api/accounts', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function listInterfaces() {
+  return request<InterfaceResponse[]>('/api/interfaces')
+}
+
+export function createInterface(payload: { name: string; step: ScenarioStep }) {
+  return request<InterfaceResponse>('/api/interfaces', {
     method: 'POST',
     body: JSON.stringify(payload),
   })

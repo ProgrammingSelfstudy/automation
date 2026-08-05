@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -139,6 +140,11 @@ func TestCreateValidatesRequiredFieldsBeforeSQL(t *testing.T) {
 			name:    "password",
 			account: Account{GroupID: "group-1", Username: "alice"},
 			wantErr: ErrPasswordRequired,
+		},
+		{
+			name:    "group id too long",
+			account: Account{GroupID: strings.Repeat("a", maxGroupIDLen+1), Username: "alice", Password: "secret"},
+			wantErr: ErrGroupIDTooLong,
 		},
 	}
 

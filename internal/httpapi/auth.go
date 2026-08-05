@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"time"
 
@@ -54,7 +55,7 @@ func (h *handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, session, err := h.deps.AuthService.Login(r.Context(), req.Username, req.Password, req.Code, req.BackupCode)
+	user, session, err := h.deps.AuthService.Login(r.Context(), clientIP(r), req.Username, req.Password, req.Code, req.BackupCode)
 	if errors.Is(err, auth.ErrTOTPSetupRequired) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "totp_setup_required"})
 		return
@@ -173,4 +174,12 @@ func newAuthUserResponse(user *authstore.User) authUserResponse {
 		TOTPEnabled: user.TOTPEnabled,
 		CreatedAt:   user.CreatedAt,
 	}
+}
+
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
