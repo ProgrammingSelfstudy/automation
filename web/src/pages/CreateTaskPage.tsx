@@ -1,12 +1,13 @@
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { ArrowLeft, Send } from 'lucide-react'
 import { type FormEvent, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import { createTask } from '../api/client'
+import { createTask, listScenarios } from '../api/client'
 import type { ScenarioStep } from '../api/client'
 import ScenarioStepEditor from '../components/ScenarioStepEditor'
 import { getErrorMessage } from '../utils/format'
+import { cloneScenarioDefinition, newScenarioStep } from '../utils/scenario'
 
 type TaskForm = {
   name: string
@@ -22,24 +23,19 @@ const initialForm: TaskForm = {
   created_by: '',
 }
 
-function newScenarioStep(index: number): ScenarioStep {
-  return {
-    name: `step-${index + 1}`,
-    method: 'GET',
-    url: '',
-    body_tpl: '',
-    headers: {},
-    extract: {},
-  }
-}
-
 export default function CreateTaskPage() {
   const navigate = useNavigate()
   const [form, setForm] = useState<TaskForm>(initialForm)
   const [steps, setSteps] = useState<ScenarioStep[]>([newScenarioStep(0)])
   const [formula, setFormula] = useState('')
   const [perAccountCount, setPerAccountCount] = useState(1)
+  const [selectedScenarioID, setSelectedScenarioID] = useState('')
   const [error, setError] = useState('')
+
+  const scenariosQuery = useQuery({
+    queryKey: ['scenarios'],
+    queryFn: listScenarios,
+  })
 
   const createMutation = useMutation({
     mutationFn: createTask,
@@ -77,6 +73,18 @@ export default function CreateTaskPage() {
         per_account_count: perAccountCount,
       },
     })
+  }
+
+  function loadSavedScenario(scenarioID: string) {
+    setSelectedScenarioID(scenarioID)
+    const saved = scenariosQuery.data?.find((item) => item.id === scenarioID)
+    if (!saved) {
+      return
+    }
+
+    const definition = cloneScenarioDefinition(saved.definition)
+    setSteps(definition.steps.length > 0 ? definition.steps : [newScenarioStep(0)])
+    setFormula(definition.formula)
   }
 
   return (
@@ -141,9 +149,29 @@ export default function CreateTaskPage() {
       </section>
 
       <section className="space-y-4">
-        <div>
-          <h3 className="text-base font-semibold text-slate-950">Scenario</h3>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="text-base font-semibold text-slate-950">Scenario</h3>
+          </div>
+          <select
+            className="input sm:w-80"
+            disabled={scenariosQuery.isLoading || (scenariosQuery.data ?? []).length === 0}
+            value={selectedScenarioID}
+            onChange={(event) => loadSavedScenario(event.target.value)}
+          >
+            <option value="">从已保存场景加载</option>
+            {(scenariosQuery.data ?? []).map((saved) => (
+              <option key={saved.id} value={saved.id}>
+                {saved.name}
+              </option>
+            ))}
+          </select>
         </div>
+        {scenariosQuery.isError ? (
+          <div className="rounded-md bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            {getErrorMessage(scenariosQuery.error)}
+          </div>
+        ) : null}
         <ScenarioStepEditor
           formula={formula}
           perAccountCount={perAccountCount}

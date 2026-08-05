@@ -20,6 +20,8 @@ import (
 	"interface-load-test/internal/loadtest"
 	"interface-load-test/internal/logevent"
 	"interface-load-test/internal/resultstore"
+	"interface-load-test/internal/scenario"
+	"interface-load-test/internal/scenariostore"
 	"interface-load-test/internal/task"
 	"interface-load-test/internal/taskmanager"
 )
@@ -86,6 +88,98 @@ func TestListAccounts(t *testing.T) {
 		t.Fatalf("len(body) = %d, want %d", got, want)
 	}
 	assertNoPassword(t, body[0])
+}
+
+func TestCreateScenario(t *testing.T) {
+	deps := newHTTPTestDeps()
+	deps.scenarios.createFunc = func(ctx context.Context, scen *scenariostore.Scenario) error {
+		if scen.Name != "checkout" {
+			t.Fatalf("scenario name = %q, want checkout", scen.Name)
+		}
+		if scen.Definition.Formula != "score * 2" || len(scen.Definition.Steps) != 1 {
+			t.Fatalf("scenario definition = %#v", scen.Definition)
+		}
+		scen.ID = "scenario-1"
+		scen.CreatedAt = testHTTPTime()
+		return nil
+	}
+	router := NewRouter(deps.Dependencies())
+
+	body := `{"name":"checkout","definition":{"steps":[{"name":"login","method":"POST","url":"https://api.test/login","headers":{"Content-Type":"application/json"},"extract":{"token":"data.token"}}],"formula":"score * 2"}}`
+	resp := serveJSON(t, router, http.MethodPost, "/api/scenarios", body)
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusCreated, resp.Body.String())
+	}
+	got := decodeObject(t, resp.Body)
+	if got["id"] != "scenario-1" || got["name"] != "checkout" {
+		t.Fatalf("response identity = %#v", got)
+	}
+	definition, ok := got["definition"].(map[string]any)
+	if !ok {
+		t.Fatalf("definition = %#v, want object", got["definition"])
+	}
+	if got, want := definition["formula"], "score * 2"; got != want {
+		t.Fatalf("formula = %v, want %v", got, want)
+	}
+}
+
+func TestCreateScenarioValidationError(t *testing.T) {
+	deps := newHTTPTestDeps()
+	deps.scenarios.createFunc = func(context.Context, *scenariostore.Scenario) error {
+		return scenariostore.ErrNameRequired
+	}
+	router := NewRouter(deps.Dependencies())
+
+	body := `{"name":"","definition":{"steps":[{"name":"login","method":"POST","url":"https://api.test/login"}]}}`
+	resp := serveJSON(t, router, http.MethodPost, "/api/scenarios", body)
+
+	assertErrorResponse(t, resp, http.StatusBadRequest, scenariostore.ErrNameRequired.Error())
+}
+
+func TestListScenarios(t *testing.T) {
+	deps := newHTTPTestDeps()
+	deps.scenarios.items = []scenariostore.Scenario{
+		{
+			ID:   "scenario-1",
+			Name: "checkout",
+			Definition: scenario.Scenario{
+				Steps: []scenario.Step{
+					{Name: "login", Method: "POST", URL: "https://api.test/login"},
+					{Name: "profile", Method: "GET", URL: "https://api.test/profile"},
+				},
+				Formula: "score * 2",
+			},
+			CreatedAt: testHTTPTime(),
+		},
+	}
+	router := NewRouter(deps.Dependencies())
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/api/scenarios", nil))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusOK, resp.Body.String())
+	}
+	var body []struct {
+		ID         string            `json:"id"`
+		Name       string            `json:"name"`
+		Definition scenario.Scenario `json:"definition"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if len(body) != 1 {
+		t.Fatalf("len(body) = %d, want 1", len(body))
+	}
+	if body[0].ID != "scenario-1" || len(body[0].Definition.Steps) != 2 || body[0].Definition.Formula != "score * 2" {
+		t.Fatalf("scenario response = %#v", body[0])
+	}
+
+	deps.scenarios.items = nil
+	empty := httptest.NewRecorder()
+	router.ServeHTTP(empty, httptest.NewRequest(http.MethodGet, "/api/scenarios", nil))
+	if empty.Code != http.StatusOK || strings.TrimSpace(empty.Body.String()) != "[]" {
+		t.Fatalf("empty scenarios = status %d body %q, want 200 []", empty.Code, empty.Body.String())
+	}
 }
 
 func TestCreateTaskFiltersDisabledAccounts(t *testing.T) {
@@ -400,6 +494,8 @@ func TestClassifyError(t *testing.T) {
 		{accountstore.ErrGroupIDRequired, http.StatusBadRequest, accountstore.ErrGroupIDRequired.Error()},
 		{accountstore.ErrUsernameRequired, http.StatusBadRequest, accountstore.ErrUsernameRequired.Error()},
 		{accountstore.ErrPasswordRequired, http.StatusBadRequest, accountstore.ErrPasswordRequired.Error()},
+		{scenariostore.ErrNameRequired, http.StatusBadRequest, scenariostore.ErrNameRequired.Error()},
+		{scenariostore.ErrStepsRequired, http.StatusBadRequest, scenariostore.ErrStepsRequired.Error()},
 		{loadtest.ErrInvalidConfig, http.StatusBadRequest, loadtest.ErrInvalidConfig.Error()},
 		{loadtest.ErrScenarioStepsRequired, http.StatusBadRequest, loadtest.ErrScenarioStepsRequired.Error()},
 		{loadtest.ErrPerAccountCount, http.StatusBadRequest, loadtest.ErrPerAccountCount.Error()},
@@ -519,16 +615,18 @@ type httpTestDeps struct {
 	tasks          *fakeHTTPTaskManager
 	accounts       *fakeHTTPAccountStore
 	results        *fakeHTTPResultStore
+	scenarios      *fakeHTTPScenarioStore
 	hub            *logevent.Hub
 	allowedOrigins []string
 }
 
 func newHTTPTestDeps() *httpTestDeps {
 	return &httpTestDeps{
-		tasks:    &fakeHTTPTaskManager{},
-		accounts: &fakeHTTPAccountStore{},
-		results:  &fakeHTTPResultStore{},
-		hub:      logevent.NewHub(),
+		tasks:     &fakeHTTPTaskManager{},
+		accounts:  &fakeHTTPAccountStore{},
+		results:   &fakeHTTPResultStore{},
+		scenarios: &fakeHTTPScenarioStore{},
+		hub:       logevent.NewHub(),
 	}
 }
 
@@ -537,6 +635,7 @@ func (d *httpTestDeps) Dependencies() Dependencies {
 		TaskManager:    d.tasks,
 		AccountStore:   d.accounts,
 		ResultStore:    d.results,
+		ScenarioStore:  d.scenarios,
 		Hub:            d.hub,
 		AllowedOrigins: d.allowedOrigins,
 	}
@@ -616,6 +715,31 @@ func (s *fakeHTTPResultStore) ListByTaskGroupedByAccount(context.Context, string
 		return nil, s.err
 	}
 	return s.groups, nil
+}
+
+type fakeHTTPScenarioStore struct {
+	items      []scenariostore.Scenario
+	createFunc func(context.Context, *scenariostore.Scenario) error
+	listFunc   func(context.Context) ([]scenariostore.Scenario, error)
+}
+
+func (s *fakeHTTPScenarioStore) Create(ctx context.Context, scen *scenariostore.Scenario) error {
+	if s.createFunc != nil {
+		return s.createFunc(ctx, scen)
+	}
+	scen.ID = "scenario-1"
+	scen.CreatedAt = testHTTPTime()
+	return nil
+}
+
+func (s *fakeHTTPScenarioStore) List(ctx context.Context) ([]scenariostore.Scenario, error) {
+	if s.listFunc != nil {
+		return s.listFunc(ctx)
+	}
+	if s.items == nil {
+		return []scenariostore.Scenario{}, nil
+	}
+	return s.items, nil
 }
 
 type fakeHTTPTaskStore struct {

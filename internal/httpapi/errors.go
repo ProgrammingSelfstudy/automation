@@ -9,6 +9,7 @@ import (
 	"interface-load-test/internal/accountstore"
 	"interface-load-test/internal/export"
 	"interface-load-test/internal/loadtest"
+	"interface-load-test/internal/scenariostore"
 	"interface-load-test/internal/taskmanager"
 )
 
@@ -18,6 +19,7 @@ func classifyError(err error) (status int, message string) {
 	switch {
 	case errors.Is(err, taskmanager.ErrNotFound),
 		errors.Is(err, accountstore.ErrNotFound),
+		errors.Is(err, scenariostore.ErrNotFound),
 		errors.Is(err, export.ErrNoResults):
 		return http.StatusNotFound, err.Error()
 	case errors.Is(err, taskmanager.ErrNoAccounts),
@@ -28,6 +30,8 @@ func classifyError(err error) (status int, message string) {
 		errors.Is(err, accountstore.ErrGroupIDRequired),
 		errors.Is(err, accountstore.ErrUsernameRequired),
 		errors.Is(err, accountstore.ErrPasswordRequired),
+		errors.Is(err, scenariostore.ErrNameRequired),
+		errors.Is(err, scenariostore.ErrStepsRequired),
 		errors.Is(err, loadtest.ErrInvalidConfig),
 		errors.Is(err, loadtest.ErrScenarioStepsRequired),
 		errors.Is(err, loadtest.ErrPerAccountCount):
