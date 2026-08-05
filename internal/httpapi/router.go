@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"interface-load-test/internal/accountstore"
+	"interface-load-test/internal/auth"
 	"interface-load-test/internal/logevent"
 	"interface-load-test/internal/resultstore"
 	"interface-load-test/internal/scenariostore"
@@ -33,8 +34,10 @@ type Dependencies struct {
 	AccountStore   accountstore.Store
 	ResultStore    ResultStore
 	ScenarioStore  scenariostore.Store
+	AuthService    *auth.Service
 	Hub            *logevent.Hub
 	AllowedOrigins []string
+	CookieSecure   bool
 }
 
 type handler struct {
@@ -46,21 +49,29 @@ func NewRouter(deps Dependencies) http.Handler {
 	h := &handler{deps: deps}
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("POST /api/accounts", h.createAccount)
-	mux.HandleFunc("GET /api/accounts", h.listAccounts)
-	mux.HandleFunc("POST /api/scenarios", h.createScenario)
-	mux.HandleFunc("GET /api/scenarios", h.listScenarios)
-	mux.HandleFunc("POST /api/tasks", h.createTask)
-	mux.HandleFunc("GET /api/tasks", h.listTasks)
-	mux.HandleFunc("GET /api/tasks/{id}", h.getTask)
-	mux.HandleFunc("POST /api/tasks/{id}/cancel", h.cancelTask)
-	mux.HandleFunc("GET /api/tasks/{id}/results", h.getTaskResults)
-	mux.HandleFunc("GET /api/tasks/{id}/export", h.exportTask)
-	mux.Handle("GET /ws/tasks/{id}/progress", wsapi.NewProgressHandler(
+	mux.HandleFunc("POST /api/auth/login", h.login)
+	mux.HandleFunc("POST /api/auth/totp/setup", h.setupTOTP)
+	mux.HandleFunc("POST /api/auth/totp/confirm", h.confirmTOTP)
+	mux.HandleFunc("POST /api/auth/logout", requireAuth(deps.AuthService, h.logout))
+	mux.HandleFunc("GET /api/auth/me", requireAuth(deps.AuthService, h.me))
+	mux.HandleFunc("POST /api/auth/users", requireAuth(deps.AuthService, h.createAuthUser))
+	mux.HandleFunc("POST /api/auth/backup-codes/regenerate", requireAuth(deps.AuthService, h.regenerateBackupCodes))
+
+	mux.HandleFunc("POST /api/accounts", requireAuth(deps.AuthService, h.createAccount))
+	mux.HandleFunc("GET /api/accounts", requireAuth(deps.AuthService, h.listAccounts))
+	mux.HandleFunc("POST /api/scenarios", requireAuth(deps.AuthService, h.createScenario))
+	mux.HandleFunc("GET /api/scenarios", requireAuth(deps.AuthService, h.listScenarios))
+	mux.HandleFunc("POST /api/tasks", requireAuth(deps.AuthService, h.createTask))
+	mux.HandleFunc("GET /api/tasks", requireAuth(deps.AuthService, h.listTasks))
+	mux.HandleFunc("GET /api/tasks/{id}", requireAuth(deps.AuthService, h.getTask))
+	mux.HandleFunc("POST /api/tasks/{id}/cancel", requireAuth(deps.AuthService, h.cancelTask))
+	mux.HandleFunc("GET /api/tasks/{id}/results", requireAuth(deps.AuthService, h.getTaskResults))
+	mux.HandleFunc("GET /api/tasks/{id}/export", requireAuth(deps.AuthService, h.exportTask))
+	mux.Handle("GET /ws/tasks/{id}/progress", requireAuthHandler(deps.AuthService, wsapi.NewProgressHandler(
 		deps.Hub,
 		wsapi.WithTaskExists(NewTaskExistsFunc(deps.TaskManager)),
 		wsapi.WithAllowedOrigins(deps.AllowedOrigins),
-	))
+	)))
 
 	return withCORS(mux, deps.AllowedOrigins)
 }

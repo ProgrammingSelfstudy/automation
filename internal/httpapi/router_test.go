@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,9 +14,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pquerna/otp/totp"
 	"github.com/xuri/excelize/v2"
+	"golang.org/x/crypto/bcrypt"
 
 	"interface-load-test/internal/accountstore"
+	"interface-load-test/internal/auth"
+	"interface-load-test/internal/authstore"
 	"interface-load-test/internal/export"
 	"interface-load-test/internal/loadtest"
 	"interface-load-test/internal/logevent"
@@ -72,11 +77,11 @@ func TestListAccounts(t *testing.T) {
 	router := NewRouter(deps.Dependencies())
 
 	missing := httptest.NewRecorder()
-	router.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/api/accounts", nil))
+	router.ServeHTTP(missing, authenticatedRequest(http.MethodGet, "/api/accounts", nil))
 	assertErrorResponse(t, missing, http.StatusBadRequest, "group_id is required")
 
 	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/api/accounts?group_id=group-1", nil))
+	router.ServeHTTP(resp, authenticatedRequest(http.MethodGet, "/api/accounts?group_id=group-1", nil))
 	if resp.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusOK, resp.Body.String())
 	}
@@ -155,7 +160,7 @@ func TestListScenarios(t *testing.T) {
 	router := NewRouter(deps.Dependencies())
 
 	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/api/scenarios", nil))
+	router.ServeHTTP(resp, authenticatedRequest(http.MethodGet, "/api/scenarios", nil))
 	if resp.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusOK, resp.Body.String())
 	}
@@ -176,7 +181,7 @@ func TestListScenarios(t *testing.T) {
 
 	deps.scenarios.items = nil
 	empty := httptest.NewRecorder()
-	router.ServeHTTP(empty, httptest.NewRequest(http.MethodGet, "/api/scenarios", nil))
+	router.ServeHTTP(empty, authenticatedRequest(http.MethodGet, "/api/scenarios", nil))
 	if empty.Code != http.StatusOK || strings.TrimSpace(empty.Body.String()) != "[]" {
 		t.Fatalf("empty scenarios = status %d body %q, want 200 []", empty.Code, empty.Body.String())
 	}
@@ -198,11 +203,14 @@ func TestCreateTaskFiltersDisabledAccounts(t *testing.T) {
 		if req.Accounts[0].ID != "acc-1" || req.Accounts[1].ID != "acc-3" {
 			t.Fatalf("CreateTask Accounts = %#v, want enabled accounts in order", req.Accounts)
 		}
+		if req.CreatedBy != "tester" {
+			t.Fatalf("CreateTask CreatedBy = %q, want tester from session", req.CreatedBy)
+		}
 		return &task.Task{ID: "task-1", ModuleType: req.ModuleType, Name: req.Name, Status: task.StatusRunning, Config: req.Config, Concurrency: req.Concurrency, TotalCount: 5, CreatedBy: req.CreatedBy, CreatedAt: testHTTPTime()}, nil
 	}
 	router := NewRouter(deps.Dependencies())
 
-	body := `{"module_type":"load_test","name":"load","config":{"scenario":{"steps":[{"name":"run","method":"GET","url":"https://load.test"}]},"per_account_count":5},"account_group_id":"group-1","concurrency":2,"created_by":"tester"}`
+	body := `{"module_type":"load_test","name":"load","config":{"scenario":{"steps":[{"name":"run","method":"GET","url":"https://load.test"}]},"per_account_count":5},"account_group_id":"group-1","concurrency":2,"created_by":"mallory"}`
 	resp := serveJSON(t, router, http.MethodPost, "/api/tasks", body)
 
 	if resp.Code != http.StatusCreated {
@@ -230,6 +238,157 @@ func TestCreateTaskMapsKnownError(t *testing.T) {
 	assertErrorResponse(t, resp, http.StatusBadRequest, taskmanager.ErrConcurrencyExceedsAccounts.Error())
 }
 
+func TestRequireAuthMiddleware(t *testing.T) {
+	store := newFakeHTTPAuthStore()
+	store.usersByID["user-1"] = &authstore.User{ID: "user-1", Username: "tester", TOTPEnabled: true, CreatedAt: testHTTPTime()}
+	store.usersByUsername["tester"] = store.usersByID["user-1"]
+	store.sessions["valid"] = &authstore.Session{ID: "valid", UserID: "user-1", ExpiresAt: time.Now().Add(time.Hour)}
+	store.sessions["expired"] = &authstore.Session{ID: "expired", UserID: "user-1", ExpiresAt: time.Now().Add(-time.Hour)}
+	protected := requireAuth(auth.NewService(store), func(w http.ResponseWriter, r *http.Request) {
+		user := currentUser(r.Context())
+		if user == nil || user.Username != "tester" {
+			t.Fatalf("current user = %#v, want tester", user)
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	})
+
+	tests := []struct {
+		name       string
+		cookie     string
+		wantStatus int
+	}{
+		{name: "no cookie", wantStatus: http.StatusUnauthorized},
+		{name: "invalid cookie", cookie: "missing", wantStatus: http.StatusUnauthorized},
+		{name: "expired session", cookie: "expired", wantStatus: http.StatusUnauthorized},
+		{name: "valid session", cookie: "valid", wantStatus: http.StatusOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+			if tt.cookie != "" {
+				req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: tt.cookie})
+			}
+			resp := httptest.NewRecorder()
+			protected(resp, req)
+			if resp.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d; body=%s", resp.Code, tt.wantStatus, resp.Body.String())
+			}
+		})
+	}
+}
+
+func TestProtectedRoutesRequireSession(t *testing.T) {
+	deps := newHTTPTestDeps()
+	router := NewRouter(deps.Dependencies())
+
+	getTasks := httptest.NewRecorder()
+	router.ServeHTTP(getTasks, httptest.NewRequest(http.MethodGet, "/api/tasks", nil))
+	assertErrorResponse(t, getTasks, http.StatusUnauthorized, "unauthorized")
+
+	createAccount := httptest.NewRecorder()
+	createReq := httptest.NewRequest(http.MethodPost, "/api/accounts", strings.NewReader(`{"group_id":"group-1","username":"alice","password":"secret"}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(createAccount, createReq)
+	assertErrorResponse(t, createAccount, http.StatusUnauthorized, "unauthorized")
+}
+
+func TestLoginHTTPRequiresTOTPSetup(t *testing.T) {
+	deps := newHTTPTestDeps()
+	deps.authStore.usersByID["admin-id"] = &authstore.User{
+		ID:           "admin-id",
+		Username:     "admin",
+		PasswordHash: hashHTTPPasswordForTest(t, "correct-password"),
+		TOTPEnabled:  false,
+		CreatedAt:    testHTTPTime(),
+	}
+	deps.authStore.usersByUsername["admin"] = deps.authStore.usersByID["admin-id"]
+	router := NewRouter(deps.Dependencies())
+
+	resp := serveJSON(t, router, http.MethodPost, "/api/auth/login", `{"username":"admin","password":"correct-password"}`)
+
+	assertErrorResponse(t, resp, http.StatusUnauthorized, "totp_setup_required")
+}
+
+func TestLoginHTTPRequiresTOTPCode(t *testing.T) {
+	deps := newHTTPTestDeps()
+	secret := testHTTPTOTPSecret(t, "admin")
+	deps.authStore.usersByID["admin-id"] = &authstore.User{
+		ID:           "admin-id",
+		Username:     "admin",
+		PasswordHash: hashHTTPPasswordForTest(t, "correct-password"),
+		TOTPSecret:   secret,
+		TOTPEnabled:  true,
+		CreatedAt:    testHTTPTime(),
+	}
+	deps.authStore.usersByUsername["admin"] = deps.authStore.usersByID["admin-id"]
+	router := NewRouter(deps.Dependencies())
+
+	resp := serveJSON(t, router, http.MethodPost, "/api/auth/login", `{"username":"admin","password":"correct-password"}`)
+
+	assertErrorResponse(t, resp, http.StatusUnauthorized, "totp_code_required")
+}
+
+func TestLoginHTTPWithTOTPCode(t *testing.T) {
+	deps := newHTTPTestDeps()
+	secret := testHTTPTOTPSecret(t, "admin")
+	deps.authStore.usersByID["admin-id"] = &authstore.User{
+		ID:           "admin-id",
+		Username:     "admin",
+		PasswordHash: hashHTTPPasswordForTest(t, "correct-password"),
+		TOTPSecret:   secret,
+		TOTPEnabled:  true,
+		CreatedAt:    testHTTPTime(),
+	}
+	deps.authStore.usersByUsername["admin"] = deps.authStore.usersByID["admin-id"]
+	router := NewRouter(deps.Dependencies())
+	code := currentHTTPTOTPCode(t, secret)
+
+	resp := serveJSON(t, router, http.MethodPost, "/api/auth/login", fmt.Sprintf(`{"username":"admin","password":"correct-password","code":%q}`, code))
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusOK, resp.Body.String())
+	}
+	if cookies := resp.Result().Cookies(); len(cookies) == 0 || cookies[0].Name != sessionCookieName || cookies[0].Value == "" {
+		t.Fatalf("cookies = %#v, want session cookie", cookies)
+	}
+	body := decodeObject(t, resp.Body)
+	user := body["user"].(map[string]any)
+	if user["username"] != "admin" {
+		t.Fatalf("username = %v, want admin", user["username"])
+	}
+}
+
+func TestLoginHTTPWithBackupCode(t *testing.T) {
+	deps := newHTTPTestDeps()
+	secret := testHTTPTOTPSecret(t, "admin")
+	deps.authStore.usersByID["admin-id"] = &authstore.User{
+		ID:           "admin-id",
+		Username:     "admin",
+		PasswordHash: hashHTTPPasswordForTest(t, "correct-password"),
+		TOTPSecret:   secret,
+		TOTPEnabled:  true,
+		CreatedAt:    testHTTPTime(),
+	}
+	deps.authStore.usersByUsername["admin"] = deps.authStore.usersByID["admin-id"]
+	deps.authStore.backupCodes["admin-id"] = []authstore.BackupCodeRef{
+		{ID: 7, Hash: hashHTTPPasswordForTest(t, "RECOVERY-CODE")},
+	}
+	router := NewRouter(deps.Dependencies())
+
+	resp := serveJSON(t, router, http.MethodPost, "/api/auth/login", `{"username":"admin","password":"correct-password","backup_code":"RECOVERY-CODE"}`)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusOK, resp.Body.String())
+	}
+	if cookies := resp.Result().Cookies(); len(cookies) == 0 || cookies[0].Name != sessionCookieName || cookies[0].Value == "" {
+		t.Fatalf("cookies = %#v, want session cookie", cookies)
+	}
+	if got := deps.authStore.markedBackupCodeIDs; len(got) != 1 || got[0] != 7 {
+		t.Fatalf("marked backup code IDs = %#v, want [7]", got)
+	}
+}
+
 func TestListTasks(t *testing.T) {
 	t.Run("default filter", func(t *testing.T) {
 		deps := newHTTPTestDeps()
@@ -244,7 +403,7 @@ func TestListTasks(t *testing.T) {
 		router := NewRouter(deps.Dependencies())
 
 		resp := httptest.NewRecorder()
-		router.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/api/tasks", nil))
+		router.ServeHTTP(resp, authenticatedRequest(http.MethodGet, "/api/tasks", nil))
 		if resp.Code != http.StatusOK {
 			t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusOK, resp.Body.String())
 		}
@@ -268,7 +427,7 @@ func TestListTasks(t *testing.T) {
 		router := NewRouter(deps.Dependencies())
 
 		resp := httptest.NewRecorder()
-		router.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/api/tasks?status=running&limit=20", nil))
+		router.ServeHTTP(resp, authenticatedRequest(http.MethodGet, "/api/tasks?status=running&limit=20", nil))
 		if resp.Code != http.StatusOK {
 			t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusOK, resp.Body.String())
 		}
@@ -282,7 +441,7 @@ func TestListTasks(t *testing.T) {
 		router := NewRouter(deps.Dependencies())
 
 		resp := httptest.NewRecorder()
-		router.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/api/tasks?limit=many", nil))
+		router.ServeHTTP(resp, authenticatedRequest(http.MethodGet, "/api/tasks?limit=many", nil))
 		assertErrorResponse(t, resp, http.StatusBadRequest, "limit must be an integer")
 	})
 }
@@ -304,23 +463,23 @@ func TestGetTaskAndCancelTask(t *testing.T) {
 	router := NewRouter(deps.Dependencies())
 
 	getResp := httptest.NewRecorder()
-	router.ServeHTTP(getResp, httptest.NewRequest(http.MethodGet, "/api/tasks/task-1", nil))
+	router.ServeHTTP(getResp, authenticatedRequest(http.MethodGet, "/api/tasks/task-1", nil))
 	if getResp.Code != http.StatusOK {
 		t.Fatalf("GET task status = %d, want %d", getResp.Code, http.StatusOK)
 	}
 
 	getMissing := httptest.NewRecorder()
-	router.ServeHTTP(getMissing, httptest.NewRequest(http.MethodGet, "/api/tasks/missing", nil))
+	router.ServeHTTP(getMissing, authenticatedRequest(http.MethodGet, "/api/tasks/missing", nil))
 	assertErrorResponse(t, getMissing, http.StatusNotFound, taskmanager.ErrNotFound.Error())
 
 	cancelResp := httptest.NewRecorder()
-	router.ServeHTTP(cancelResp, httptest.NewRequest(http.MethodPost, "/api/tasks/task-1/cancel", nil))
+	router.ServeHTTP(cancelResp, authenticatedRequest(http.MethodPost, "/api/tasks/task-1/cancel", nil))
 	if cancelResp.Code != http.StatusOK {
 		t.Fatalf("cancel status = %d, want %d", cancelResp.Code, http.StatusOK)
 	}
 
 	cancelMissing := httptest.NewRecorder()
-	router.ServeHTTP(cancelMissing, httptest.NewRequest(http.MethodPost, "/api/tasks/missing/cancel", nil))
+	router.ServeHTTP(cancelMissing, authenticatedRequest(http.MethodPost, "/api/tasks/missing/cancel", nil))
 	assertErrorResponse(t, cancelMissing, http.StatusNotFound, taskmanager.ErrNotFound.Error())
 }
 
@@ -351,17 +510,17 @@ func TestGetTaskResults(t *testing.T) {
 	router := NewRouter(deps.Dependencies())
 
 	missingTask := httptest.NewRecorder()
-	router.ServeHTTP(missingTask, httptest.NewRequest(http.MethodGet, "/api/tasks/missing/results", nil))
+	router.ServeHTTP(missingTask, authenticatedRequest(http.MethodGet, "/api/tasks/missing/results", nil))
 	assertErrorResponse(t, missingTask, http.StatusNotFound, taskmanager.ErrNotFound.Error())
 
 	empty := httptest.NewRecorder()
-	router.ServeHTTP(empty, httptest.NewRequest(http.MethodGet, "/api/tasks/task-1/results?account_id=missing-acc", nil))
+	router.ServeHTTP(empty, authenticatedRequest(http.MethodGet, "/api/tasks/task-1/results?account_id=missing-acc", nil))
 	if empty.Code != http.StatusOK || strings.TrimSpace(empty.Body.String()) != "[]" {
 		t.Fatalf("empty results = status %d body %q, want 200 []", empty.Code, empty.Body.String())
 	}
 
 	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/api/tasks/task-1/results?account_id=acc-1", nil))
+	router.ServeHTTP(resp, authenticatedRequest(http.MethodGet, "/api/tasks/task-1/results?account_id=acc-1", nil))
 	if resp.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", resp.Code, http.StatusOK)
 	}
@@ -384,7 +543,7 @@ func TestGetTaskResults(t *testing.T) {
 	}
 
 	all := httptest.NewRecorder()
-	router.ServeHTTP(all, httptest.NewRequest(http.MethodGet, "/api/tasks/task-1/results", nil))
+	router.ServeHTTP(all, authenticatedRequest(http.MethodGet, "/api/tasks/task-1/results", nil))
 	if all.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", all.Code, http.StatusOK)
 	}
@@ -410,15 +569,18 @@ func TestCORS(t *testing.T) {
 	router := NewRouter(deps.Dependencies())
 
 	allowed := httptest.NewRecorder()
-	allowedReq := httptest.NewRequest(http.MethodGet, "/api/tasks", nil)
+	allowedReq := authenticatedRequest(http.MethodGet, "/api/tasks", nil)
 	allowedReq.Header.Set("Origin", "http://localhost:5173")
 	router.ServeHTTP(allowed, allowedReq)
 	if got, want := allowed.Header().Get("Access-Control-Allow-Origin"), "http://localhost:5173"; got != want {
 		t.Fatalf("allowed origin header = %q, want %q", got, want)
 	}
+	if got, want := allowed.Header().Get("Access-Control-Allow-Credentials"), "true"; got != want {
+		t.Fatalf("credentials header = %q, want %q", got, want)
+	}
 
 	disallowed := httptest.NewRecorder()
-	disallowedReq := httptest.NewRequest(http.MethodGet, "/api/tasks", nil)
+	disallowedReq := authenticatedRequest(http.MethodGet, "/api/tasks", nil)
 	disallowedReq.Header.Set("Origin", "http://evil.local")
 	router.ServeHTTP(disallowed, disallowedReq)
 	if got := disallowed.Header().Get("Access-Control-Allow-Origin"); got != "" {
@@ -452,7 +614,7 @@ func TestExportTask(t *testing.T) {
 	router := NewRouter(deps.Dependencies())
 
 	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/api/tasks/task-1/export", nil))
+	router.ServeHTTP(resp, authenticatedRequest(http.MethodGet, "/api/tasks/task-1/export", nil))
 	if resp.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusOK, resp.Body.String())
 	}
@@ -473,7 +635,7 @@ func TestExportTask(t *testing.T) {
 
 	deps.results.groups = nil
 	empty := httptest.NewRecorder()
-	router.ServeHTTP(empty, httptest.NewRequest(http.MethodGet, "/api/tasks/task-1/export", nil))
+	router.ServeHTTP(empty, authenticatedRequest(http.MethodGet, "/api/tasks/task-1/export", nil))
 	assertErrorResponse(t, empty, http.StatusNotFound, export.ErrNoResults.Error())
 }
 
@@ -496,6 +658,13 @@ func TestClassifyError(t *testing.T) {
 		{accountstore.ErrPasswordRequired, http.StatusBadRequest, accountstore.ErrPasswordRequired.Error()},
 		{scenariostore.ErrNameRequired, http.StatusBadRequest, scenariostore.ErrNameRequired.Error()},
 		{scenariostore.ErrStepsRequired, http.StatusBadRequest, scenariostore.ErrStepsRequired.Error()},
+		{auth.ErrInvalidCredentials, http.StatusUnauthorized, auth.ErrInvalidCredentials.Error()},
+		{auth.ErrInvalidCode, http.StatusUnauthorized, auth.ErrInvalidCode.Error()},
+		{auth.ErrTOTPCodeRequired, http.StatusUnauthorized, auth.ErrTOTPCodeRequired.Error()},
+		{auth.ErrTOTPSetupRequired, http.StatusUnauthorized, auth.ErrTOTPSetupRequired.Error()},
+		{authstore.ErrUsernameTaken, http.StatusBadRequest, authstore.ErrUsernameTaken.Error()},
+		{auth.ErrWeakPassword, http.StatusBadRequest, auth.ErrWeakPassword.Error()},
+		{auth.ErrTOTPAlreadyEnabled, http.StatusBadRequest, auth.ErrTOTPAlreadyEnabled.Error()},
 		{loadtest.ErrInvalidConfig, http.StatusBadRequest, loadtest.ErrInvalidConfig.Error()},
 		{loadtest.ErrScenarioStepsRequired, http.StatusBadRequest, loadtest.ErrScenarioStepsRequired.Error()},
 		{loadtest.ErrPerAccountCount, http.StatusBadRequest, loadtest.ErrPerAccountCount.Error()},
@@ -542,10 +711,15 @@ func TestCreateTaskInvalidConfigReturnsBadRequest(t *testing.T) {
 	registry := task.NewModuleRegistry()
 	registry.Register(loadtest.NewModule(nil, nil))
 	manager := taskmanager.NewManager(taskStore, registry)
+	authStore := newFakeHTTPAuthStore()
+	authStore.usersByID["user-1"] = &authstore.User{ID: "user-1", Username: "tester", TOTPEnabled: true, CreatedAt: testHTTPTime()}
+	authStore.usersByUsername["tester"] = authStore.usersByID["user-1"]
+	authStore.sessions["session-1"] = &authstore.Session{ID: "session-1", UserID: "user-1", ExpiresAt: time.Now().Add(time.Hour)}
 	router := NewRouter(Dependencies{
 		TaskManager:  manager,
 		AccountStore: accountStore,
 		ResultStore:  &fakeHTTPResultStore{},
+		AuthService:  auth.NewService(authStore),
 		Hub:          logevent.NewHub(),
 	})
 
@@ -616,16 +790,31 @@ type httpTestDeps struct {
 	accounts       *fakeHTTPAccountStore
 	results        *fakeHTTPResultStore
 	scenarios      *fakeHTTPScenarioStore
+	authStore      *fakeHTTPAuthStore
 	hub            *logevent.Hub
 	allowedOrigins []string
 }
 
 func newHTTPTestDeps() *httpTestDeps {
+	authStore := newFakeHTTPAuthStore()
+	authStore.usersByID["user-1"] = &authstore.User{
+		ID:          "user-1",
+		Username:    "tester",
+		TOTPEnabled: true,
+		CreatedAt:   testHTTPTime(),
+	}
+	authStore.usersByUsername["tester"] = authStore.usersByID["user-1"]
+	authStore.sessions["session-1"] = &authstore.Session{
+		ID:        "session-1",
+		UserID:    "user-1",
+		ExpiresAt: time.Now().Add(time.Hour),
+	}
 	return &httpTestDeps{
 		tasks:     &fakeHTTPTaskManager{},
 		accounts:  &fakeHTTPAccountStore{},
 		results:   &fakeHTTPResultStore{},
 		scenarios: &fakeHTTPScenarioStore{},
+		authStore: authStore,
 		hub:       logevent.NewHub(),
 	}
 }
@@ -636,9 +825,134 @@ func (d *httpTestDeps) Dependencies() Dependencies {
 		AccountStore:   d.accounts,
 		ResultStore:    d.results,
 		ScenarioStore:  d.scenarios,
+		AuthService:    auth.NewService(d.authStore),
 		Hub:            d.hub,
 		AllowedOrigins: d.allowedOrigins,
 	}
+}
+
+type fakeHTTPAuthStore struct {
+	mu                  sync.Mutex
+	usersByID           map[string]*authstore.User
+	usersByUsername     map[string]*authstore.User
+	sessions            map[string]*authstore.Session
+	backupCodes         map[string][]authstore.BackupCodeRef
+	usedBackupCodeIDs   map[int64]bool
+	markedBackupCodeIDs []int64
+}
+
+func newFakeHTTPAuthStore() *fakeHTTPAuthStore {
+	return &fakeHTTPAuthStore{
+		usersByID:         make(map[string]*authstore.User),
+		usersByUsername:   make(map[string]*authstore.User),
+		sessions:          make(map[string]*authstore.Session),
+		backupCodes:       make(map[string][]authstore.BackupCodeRef),
+		usedBackupCodeIDs: make(map[int64]bool),
+	}
+}
+
+func (s *fakeHTTPAuthStore) CreateUser(_ context.Context, user *authstore.User) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.usersByUsername[user.Username]; ok {
+		return authstore.ErrUsernameTaken
+	}
+	if user.ID == "" {
+		user.ID = fmt.Sprintf("user-%d", len(s.usersByID)+1)
+	}
+	cloned := cloneHTTPUser(user)
+	s.usersByID[cloned.ID] = cloned
+	s.usersByUsername[cloned.Username] = cloned
+	return nil
+}
+
+func (s *fakeHTTPAuthStore) GetUserByUsername(_ context.Context, username string) (*authstore.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, ok := s.usersByUsername[username]
+	if !ok {
+		return nil, authstore.ErrNotFound
+	}
+	return cloneHTTPUser(user), nil
+}
+
+func (s *fakeHTTPAuthStore) GetUserByID(_ context.Context, id string) (*authstore.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, ok := s.usersByID[id]
+	if !ok {
+		return nil, authstore.ErrNotFound
+	}
+	return cloneHTTPUser(user), nil
+}
+
+func (s *fakeHTTPAuthStore) UpdateTOTP(_ context.Context, userID, secret string, enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, ok := s.usersByID[userID]
+	if !ok {
+		return authstore.ErrNotFound
+	}
+	user.TOTPSecret = secret
+	user.TOTPEnabled = enabled
+	s.usersByUsername[user.Username] = user
+	return nil
+}
+
+func (s *fakeHTTPAuthStore) ReplaceBackupCodes(_ context.Context, userID string, hashes []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	refs := make([]authstore.BackupCodeRef, 0, len(hashes))
+	for i, hash := range hashes {
+		refs = append(refs, authstore.BackupCodeRef{ID: int64(i + 1), Hash: hash})
+	}
+	s.backupCodes[userID] = refs
+	s.usedBackupCodeIDs = make(map[int64]bool)
+	return nil
+}
+
+func (s *fakeHTTPAuthStore) ListUnusedBackupCodes(_ context.Context, userID string) ([]authstore.BackupCodeRef, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	refs := make([]authstore.BackupCodeRef, 0, len(s.backupCodes[userID]))
+	for _, ref := range s.backupCodes[userID] {
+		if !s.usedBackupCodeIDs[ref.ID] {
+			refs = append(refs, ref)
+		}
+	}
+	return refs, nil
+}
+
+func (s *fakeHTTPAuthStore) MarkBackupCodeUsed(_ context.Context, id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.usedBackupCodeIDs[id] = true
+	s.markedBackupCodeIDs = append(s.markedBackupCodeIDs, id)
+	return nil
+}
+
+func (s *fakeHTTPAuthStore) CreateSession(_ context.Context, session *authstore.Session) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessions[session.ID] = &authstore.Session{ID: session.ID, UserID: session.UserID, ExpiresAt: session.ExpiresAt}
+	return nil
+}
+
+func (s *fakeHTTPAuthStore) GetSession(_ context.Context, id string) (*authstore.Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.sessions[id]
+	if !ok || time.Now().After(session.ExpiresAt) {
+		return nil, authstore.ErrNotFound
+	}
+	return &authstore.Session{ID: session.ID, UserID: session.UserID, ExpiresAt: session.ExpiresAt}, nil
+}
+
+func (s *fakeHTTPAuthStore) DeleteSession(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.sessions, id)
+	return nil
 }
 
 type fakeHTTPTaskManager struct {
@@ -781,11 +1095,17 @@ func (s *fakeHTTPTaskStore) InsertCount() int {
 func serveJSON(t *testing.T, handler http.Handler, method string, target string, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	req := authenticatedRequest(method, target, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 	return resp
+}
+
+func authenticatedRequest(method string, target string, body io.Reader) *http.Request {
+	req := httptest.NewRequest(method, target, body)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "session-1"})
+	return req
 }
 
 func decodeObject(t *testing.T, r io.Reader) map[string]any {
@@ -833,4 +1153,39 @@ func readBody(t *testing.T, r io.Reader) string {
 
 func testHTTPTime() time.Time {
 	return time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+}
+
+func hashHTTPPasswordForTest(t *testing.T, password string) string {
+	t.Helper()
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("GenerateFromPassword() error = %v", err)
+	}
+	return string(hash)
+}
+
+func testHTTPTOTPSecret(t *testing.T, username string) string {
+	t.Helper()
+	key, err := totp.Generate(totp.GenerateOpts{Issuer: "test", AccountName: username})
+	if err != nil {
+		t.Fatalf("totp.Generate() error = %v", err)
+	}
+	return key.Secret()
+}
+
+func currentHTTPTOTPCode(t *testing.T, secret string) string {
+	t.Helper()
+	code, err := totp.GenerateCode(secret, time.Now())
+	if err != nil {
+		t.Fatalf("GenerateCode() error = %v", err)
+	}
+	return code
+}
+
+func cloneHTTPUser(user *authstore.User) *authstore.User {
+	if user == nil {
+		return nil
+	}
+	cloned := *user
+	return &cloned
 }

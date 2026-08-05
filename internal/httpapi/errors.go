@@ -7,6 +7,8 @@ import (
 	"net/http"
 
 	"interface-load-test/internal/accountstore"
+	"interface-load-test/internal/auth"
+	"interface-load-test/internal/authstore"
 	"interface-load-test/internal/export"
 	"interface-load-test/internal/loadtest"
 	"interface-load-test/internal/scenariostore"
@@ -22,6 +24,11 @@ func classifyError(err error) (status int, message string) {
 		errors.Is(err, scenariostore.ErrNotFound),
 		errors.Is(err, export.ErrNoResults):
 		return http.StatusNotFound, err.Error()
+	case errors.Is(err, auth.ErrInvalidCredentials),
+		errors.Is(err, auth.ErrInvalidCode),
+		errors.Is(err, auth.ErrTOTPCodeRequired),
+		errors.Is(err, auth.ErrTOTPSetupRequired):
+		return http.StatusUnauthorized, err.Error()
 	case errors.Is(err, taskmanager.ErrNoAccounts),
 		errors.Is(err, taskmanager.ErrInvalidConcurrency),
 		errors.Is(err, taskmanager.ErrConcurrencyExceedsAccounts),
@@ -32,6 +39,9 @@ func classifyError(err error) (status int, message string) {
 		errors.Is(err, accountstore.ErrPasswordRequired),
 		errors.Is(err, scenariostore.ErrNameRequired),
 		errors.Is(err, scenariostore.ErrStepsRequired),
+		errors.Is(err, authstore.ErrUsernameTaken),
+		errors.Is(err, auth.ErrWeakPassword),
+		errors.Is(err, auth.ErrTOTPAlreadyEnabled),
 		errors.Is(err, loadtest.ErrInvalidConfig),
 		errors.Is(err, loadtest.ErrScenarioStepsRequired),
 		errors.Is(err, loadtest.ErrPerAccountCount):

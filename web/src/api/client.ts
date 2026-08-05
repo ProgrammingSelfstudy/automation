@@ -25,6 +25,26 @@ export type ScenarioResponse = {
   created_at: string
 }
 
+export type AuthUser = {
+  id: string
+  username: string
+  totp_enabled: boolean
+  created_at: string
+}
+
+export type AuthUserResponse = {
+  user: AuthUser
+}
+
+export type TOTPSetupResponse = {
+  secret: string
+  otpauth_url: string
+}
+
+export type TOTPConfirmResponse = AuthUserResponse & {
+  backup_codes: string[]
+}
+
 export type LoadTestConfig = {
   scenario: Scenario
   per_account_count: number
@@ -70,7 +90,6 @@ export type CreateTaskRequest = {
   config: LoadTestConfig
   account_group_id: string
   concurrency: number
-  created_by: string
 }
 
 export type ResultRowResponse = {
@@ -157,6 +176,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
+    credentials: 'include',
     headers,
   })
   if (!response.ok) {
@@ -222,6 +242,56 @@ export function listScenarios() {
 
 export function createScenario(payload: { name: string; definition: Scenario }) {
   return request<ScenarioResponse>('/api/scenarios', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function login(payload: {
+  username: string
+  password: string
+  code?: string
+  backup_code?: string
+}) {
+  return request<AuthUserResponse>('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function setupTOTP(payload: { username: string; password: string }) {
+  return request<TOTPSetupResponse>('/api/auth/totp/setup', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function confirmTOTP(payload: { username: string; password: string; code: string }) {
+  return request<TOTPConfirmResponse>('/api/auth/totp/confirm', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function logout() {
+  return request<{ logged_out: boolean }>('/api/auth/logout', {
+    method: 'POST',
+  })
+}
+
+export function me() {
+  return request<AuthUserResponse>('/api/auth/me')
+}
+
+export function createUser(payload: { username: string; password: string }) {
+  return request<AuthUserResponse>('/api/auth/users', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function regenerateBackupCodes(payload: { password: string }) {
+  return request<{ backup_codes: string[] }>('/api/auth/backup-codes/regenerate', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
