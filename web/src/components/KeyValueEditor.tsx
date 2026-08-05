@@ -40,8 +40,8 @@ function valueFromRows(rows: Row[]) {
 export default function KeyValueEditor({
   value,
   onChange,
-  keyPlaceholder = 'key',
-  valuePlaceholder = 'value',
+  keyPlaceholder = '键',
+  valuePlaceholder = '值',
 }: KeyValueEditorProps) {
   const incomingSignature = useMemo(() => JSON.stringify(value), [value])
   const [rows, setRows] = useState<Row[]>(() => rowsFromValue(value))

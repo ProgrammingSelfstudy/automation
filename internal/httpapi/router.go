@@ -7,6 +7,7 @@ import (
 
 	"interface-load-test/internal/accountstore"
 	"interface-load-test/internal/auth"
+	"interface-load-test/internal/interfacestore"
 	"interface-load-test/internal/logevent"
 	"interface-load-test/internal/resultstore"
 	"interface-load-test/internal/scenariostore"
@@ -33,6 +34,7 @@ type Dependencies struct {
 	TaskManager    TaskManager
 	AccountStore   accountstore.Store
 	ResultStore    ResultStore
+	InterfaceStore interfacestore.Store
 	ScenarioStore  scenariostore.Store
 	AuthService    *auth.Service
 	Hub            *logevent.Hub
@@ -59,6 +61,8 @@ func NewRouter(deps Dependencies) http.Handler {
 
 	mux.HandleFunc("POST /api/accounts", requireAuth(deps.AuthService, h.createAccount))
 	mux.HandleFunc("GET /api/accounts", requireAuth(deps.AuthService, h.listAccounts))
+	mux.HandleFunc("POST /api/interfaces", requireAuth(deps.AuthService, h.createInterface))
+	mux.HandleFunc("GET /api/interfaces", requireAuth(deps.AuthService, h.listInterfaces))
 	mux.HandleFunc("POST /api/scenarios", requireAuth(deps.AuthService, h.createScenario))
 	mux.HandleFunc("GET /api/scenarios", requireAuth(deps.AuthService, h.listScenarios))
 	mux.HandleFunc("POST /api/tasks", requireAuth(deps.AuthService, h.createTask))
@@ -73,7 +77,7 @@ func NewRouter(deps Dependencies) http.Handler {
 		wsapi.WithAllowedOrigins(deps.AllowedOrigins),
 	)))
 
-	return withCORS(mux, deps.AllowedOrigins)
+	return withAccessLog(withCORS(mux, deps.AllowedOrigins))
 }
 
 // NewTaskExistsFunc adapts TaskManager.GetTask to wsapi task existence checks.

@@ -88,12 +88,12 @@ export default function AccountsPage() {
         <form className="toolbar" onSubmit={runSearch}>
           <div>
             <h2 className="text-base font-semibold text-slate-950">账号管理</h2>
-            <div className="mt-1 text-sm text-slate-500">{activeGroup || 'group_id'}</div>
+            <div className="mt-1 text-sm text-slate-500">{activeGroup || '账号组 ID'}</div>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <input
               className="input sm:w-72"
-              placeholder="group_id"
+              placeholder="账号组 ID"
               value={groupInput}
               onChange={(event) => setGroupInput(event.target.value)}
             />
@@ -111,12 +111,12 @@ export default function AccountsPage() {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>username</th>
-                  <th>enabled</th>
-                  <th>created_at</th>
+                  <th>用户名</th>
+                  <th>是否启用</th>
+                  <th>创建时间</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 bg-white">
+              <tbody className="divide-y divide-white/50 bg-white/35">
                 {accountsQuery.isFetching ? (
                   <tr>
                     <td className="text-slate-500" colSpan={3}>
@@ -142,7 +142,7 @@ export default function AccountsPage() {
                           }`}
                         >
                           {account.enabled ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
-                          {account.enabled ? 'true' : 'false'}
+                          {account.enabled ? '启用' : '停用'}
                         </span>
                       </td>
                       <td>{formatDateTime(account.created_at)}</td>
@@ -165,7 +165,7 @@ export default function AccountsPage() {
         </div>
         <div className="grid gap-4 p-4 sm:p-5 lg:grid-cols-2">
           <label className="space-y-1">
-            <span className="field-label">group_id</span>
+            <span className="field-label">账号组 ID</span>
             <input
               className="input"
               value={form.group_id}
@@ -173,7 +173,7 @@ export default function AccountsPage() {
             />
           </label>
           <label className="space-y-1">
-            <span className="field-label">username</span>
+            <span className="field-label">用户名</span>
             <input
               className="input"
               value={form.username}
@@ -181,7 +181,7 @@ export default function AccountsPage() {
             />
           </label>
           <label className="space-y-1">
-            <span className="field-label">password</span>
+            <span className="field-label">密码</span>
             <input
               className="input"
               type="password"
@@ -196,10 +196,10 @@ export default function AccountsPage() {
               type="checkbox"
               onChange={(event) => setForm({ ...form, enabled: event.target.checked })}
             />
-            enabled
+            {form.enabled ? '启用账号' : '停用账号'}
           </label>
           <label className="space-y-1 lg:col-span-2">
-            <span className="field-label">extra</span>
+            <span className="field-label">扩展 JSON</span>
             <textarea
               className="textarea"
               value={form.extra}

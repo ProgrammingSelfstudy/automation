@@ -6,15 +6,15 @@ import { useNavigate } from 'react-router-dom'
 import { listTasks } from '../api/client'
 import type { TaskStatus } from '../api/client'
 import StatusBadge from '../components/StatusBadge'
-import { formatDateTime, formatNumber, getErrorMessage } from '../utils/format'
+import { formatDateTime, formatModuleType, formatNumber, getErrorMessage } from '../utils/format'
 
 const STATUS_OPTIONS: Array<{ value: '' | TaskStatus; label: string }> = [
   { value: '', label: '全部状态' },
-  { value: 'pending', label: 'pending' },
-  { value: 'running', label: 'running' },
-  { value: 'success', label: 'success' },
-  { value: 'failed', label: 'failed' },
-  { value: 'canceled', label: 'canceled' },
+  { value: 'pending', label: '等待中' },
+  { value: 'running', label: '运行中' },
+  { value: 'success', label: '成功' },
+  { value: 'failed', label: '失败' },
+  { value: 'canceled', label: '已取消' },
 ]
 
 export default function TaskListPage() {
@@ -77,7 +77,7 @@ export default function TaskListPage() {
                   <th>创建时间</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 bg-white">
+              <tbody className="divide-y divide-white/50 bg-white/35">
                 {tasksQuery.isLoading ? (
                   <tr>
                     <td className="text-slate-500" colSpan={8}>
@@ -98,7 +98,7 @@ export default function TaskListPage() {
                       onClick={() => navigate(`/tasks/${item.id}`)}
                     >
                       <td className="font-medium text-slate-950">{item.name || item.id}</td>
-                      <td>{item.module_type}</td>
+                      <td>{formatModuleType(item.module_type)}</td>
                       <td>
                         <StatusBadge status={item.status} />
                       </td>

@@ -10,6 +10,7 @@ import (
 	"interface-load-test/internal/auth"
 	"interface-load-test/internal/authstore"
 	"interface-load-test/internal/export"
+	"interface-load-test/internal/interfacestore"
 	"interface-load-test/internal/loadtest"
 	"interface-load-test/internal/scenariostore"
 	"interface-load-test/internal/taskmanager"
@@ -29,14 +30,22 @@ func classifyError(err error) (status int, message string) {
 		errors.Is(err, auth.ErrTOTPCodeRequired),
 		errors.Is(err, auth.ErrTOTPSetupRequired):
 		return http.StatusUnauthorized, err.Error()
+	case errors.Is(err, auth.ErrTooManyAttempts):
+		return http.StatusTooManyRequests, err.Error()
+	case errors.Is(err, taskmanager.ErrShuttingDown):
+		return http.StatusServiceUnavailable, err.Error()
 	case errors.Is(err, taskmanager.ErrNoAccounts),
 		errors.Is(err, taskmanager.ErrInvalidConcurrency),
 		errors.Is(err, taskmanager.ErrConcurrencyExceedsAccounts),
 		errors.Is(err, taskmanager.ErrInvalidTotalCount),
 		errors.Is(err, taskmanager.ErrUnknownModuleType),
 		errors.Is(err, accountstore.ErrGroupIDRequired),
+		errors.Is(err, accountstore.ErrGroupIDTooLong),
 		errors.Is(err, accountstore.ErrUsernameRequired),
 		errors.Is(err, accountstore.ErrPasswordRequired),
+		errors.Is(err, interfacestore.ErrNameRequired),
+		errors.Is(err, interfacestore.ErrMethodRequired),
+		errors.Is(err, interfacestore.ErrURLRequired),
 		errors.Is(err, scenariostore.ErrNameRequired),
 		errors.Is(err, scenariostore.ErrStepsRequired),
 		errors.Is(err, authstore.ErrUsernameTaken),

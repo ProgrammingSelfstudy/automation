@@ -270,6 +270,145 @@ func TestManagerCancelTaskCancelsRunningModule(t *testing.T) {
 	}
 }
 
+func TestManagerShutdownCancelsRunningTasksAndWaits(t *testing.T) {
+	store := newFakeStore()
+	module := newFakeModule("load_test")
+	runCanceled := make(chan struct{})
+	module.runFunc = func(ctx context.Context, tk *task.Task, accounts []*accountpool.Account) (task.RunResult, error) {
+		<-ctx.Done()
+		close(runCanceled)
+		return task.RunResult{SuccessCount: 1}, nil
+	}
+	manager := newTestManager(store, module)
+
+	if _, err := manager.CreateTask(context.Background(), validCreateRequest()); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	module.waitRunCall(t)
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := manager.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+
+	select {
+	case <-runCanceled:
+	default:
+		t.Fatal("module run context was not canceled")
+	}
+	finished := store.waitFinished(t)
+	if finished.status != task.StatusCanceled {
+		t.Fatalf("finished status = %q, want %q", finished.status, task.StatusCanceled)
+	}
+}
+
+func TestManagerShutdownRejectsNewTasks(t *testing.T) {
+	store := newFakeStore()
+	manager := newTestManager(store, newFakeModule("load_test"))
+
+	if err := manager.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+
+	_, err := manager.CreateTask(context.Background(), validCreateRequest())
+	if !errors.Is(err, ErrShuttingDown) {
+		t.Fatalf("CreateTask() error = %v, want %v", err, ErrShuttingDown)
+	}
+	if got := store.InsertCount(); got != 0 {
+		t.Fatalf("InsertCount = %d, want 0", got)
+	}
+}
+
+func TestManagerShutdownReturnsDeadlineExceededWhenTaskIgnoresCancellation(t *testing.T) {
+	store := newFakeStore()
+	module := newFakeModule("load_test")
+	block := make(chan struct{})
+	module.runFunc = func(ctx context.Context, tk *task.Task, accounts []*accountpool.Account) (task.RunResult, error) {
+		<-block // ignores ctx cancellation on purpose
+		return task.RunResult{}, nil
+	}
+	manager := newTestManager(store, module)
+	defer close(block) // let the goroutine finish so the test doesn't leak it
+
+	if _, err := manager.CreateTask(context.Background(), validCreateRequest()); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	module.waitRunCall(t)
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	err := manager.Shutdown(shutdownCtx)
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Shutdown() error = %v, want %v", err, context.DeadlineExceeded)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("Shutdown() took %v, want it to return promptly at the ctx deadline", elapsed)
+	}
+}
+
+func TestManagerShutdownWaitsForAllRunningTasks(t *testing.T) {
+	store := newFakeStore()
+	module := newFakeModule("load_test")
+	const taskCount = 3
+	var mu sync.Mutex
+	finishedBeforeShutdownReturned := 0
+	release := make(chan struct{})
+	module.runFunc = func(ctx context.Context, tk *task.Task, accounts []*accountpool.Account) (task.RunResult, error) {
+		<-ctx.Done()
+		<-release
+		mu.Lock()
+		finishedBeforeShutdownReturned++
+		mu.Unlock()
+		return task.RunResult{}, nil
+	}
+	manager := newTestManager(store, module)
+
+	for i := 0; i < taskCount; i++ {
+		if _, err := manager.CreateTask(context.Background(), validCreateRequest()); err != nil {
+			t.Fatalf("CreateTask() error = %v", err)
+		}
+	}
+	for i := 0; i < taskCount; i++ {
+		module.waitRunCall(t)
+	}
+
+	shutdownDone := make(chan error, 1)
+	go func() {
+		shutdownDone <- manager.Shutdown(context.Background())
+	}()
+
+	// Release the tasks one at a time; Shutdown must not return until the last one is done.
+	for i := 0; i < taskCount-1; i++ {
+		release <- struct{}{}
+		select {
+		case <-shutdownDone:
+			t.Fatalf("Shutdown() returned after only %d/%d tasks finished", i+1, taskCount)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	release <- struct{}{}
+
+	select {
+	case err := <-shutdownDone:
+		if err != nil {
+			t.Fatalf("Shutdown() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Shutdown() did not return after all tasks finished")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if finishedBeforeShutdownReturned != taskCount {
+		t.Fatalf("finished count = %d, want %d", finishedBeforeShutdownReturned, taskCount)
+	}
+}
+
 func TestManagerCancelTaskMissing(t *testing.T) {
 	manager := newTestManager(newFakeStore(), newFakeModule("load_test"))
 

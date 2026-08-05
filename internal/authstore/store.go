@@ -24,6 +24,8 @@ const (
 	insertSessionSQL      = "INSERT INTO `session` (id, user_id, expires_at) VALUES (?, ?, ?)"
 	getSessionSQL         = "SELECT id, user_id, expires_at FROM `session` WHERE id = ? AND expires_at >= NOW()"
 	deleteSessionSQL      = "DELETE FROM `session` WHERE id = ?"
+	insertLoginAttemptSQL = "INSERT INTO login_attempt (ip) VALUES (?)"
+	countLoginAttemptsSQL = "SELECT COUNT(*) FROM login_attempt WHERE ip = ? AND created_at >= ?"
 	tinyIntTrue           = 1
 	tinyIntFalse          = 0
 )
@@ -64,6 +66,8 @@ type Store interface {
 	CreateSession(ctx context.Context, s *Session) error
 	GetSession(ctx context.Context, id string) (*Session, error)
 	DeleteSession(ctx context.Context, id string) error
+	RecordFailedLoginAttempt(ctx context.Context, ip string) error
+	CountRecentFailedLoginAttempts(ctx context.Context, ip string, since time.Time) (int, error)
 }
 
 type SQLStore struct {
@@ -193,6 +197,19 @@ func (s *SQLStore) GetSession(ctx context.Context, id string) (*Session, error) 
 func (s *SQLStore) DeleteSession(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, deleteSessionSQL, id)
 	return err
+}
+
+func (s *SQLStore) RecordFailedLoginAttempt(ctx context.Context, ip string) error {
+	_, err := s.db.ExecContext(ctx, insertLoginAttemptSQL, ip)
+	return err
+}
+
+func (s *SQLStore) CountRecentFailedLoginAttempts(ctx context.Context, ip string, since time.Time) (int, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx, countLoginAttemptsSQL, ip, since).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 type userScanner interface {

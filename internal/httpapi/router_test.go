@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/pquerna/otp/totp"
 	"github.com/xuri/excelize/v2"
 	"golang.org/x/crypto/bcrypt"
@@ -22,6 +23,7 @@ import (
 	"interface-load-test/internal/auth"
 	"interface-load-test/internal/authstore"
 	"interface-load-test/internal/export"
+	"interface-load-test/internal/interfacestore"
 	"interface-load-test/internal/loadtest"
 	"interface-load-test/internal/logevent"
 	"interface-load-test/internal/resultstore"
@@ -93,6 +95,102 @@ func TestListAccounts(t *testing.T) {
 		t.Fatalf("len(body) = %d, want %d", got, want)
 	}
 	assertNoPassword(t, body[0])
+}
+
+func TestCreateInterface(t *testing.T) {
+	deps := newHTTPTestDeps()
+	deps.interfaces.createFunc = func(ctx context.Context, iface *interfacestore.Interface) error {
+		if iface.Name != "login api" {
+			t.Fatalf("interface name = %q, want login api", iface.Name)
+		}
+		if iface.Step.Method != "POST" || iface.Step.URL != "https://api.test/login" {
+			t.Fatalf("interface step = %#v", iface.Step)
+		}
+		if iface.Step.Headers["Content-Type"] != "application/json" || iface.Step.Extract["token"] != "data.token" {
+			t.Fatalf("interface step maps = %#v", iface.Step)
+		}
+		iface.ID = "interface-1"
+		iface.CreatedAt = testHTTPTime()
+		return nil
+	}
+	router := NewRouter(deps.Dependencies())
+
+	body := `{"name":"login api","step":{"name":"login","method":"POST","url":"https://api.test/login","body_tpl":"{}","headers":{"Content-Type":"application/json"},"extract":{"token":"data.token"}}}`
+	resp := serveJSON(t, router, http.MethodPost, "/api/interfaces", body)
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusCreated, resp.Body.String())
+	}
+	got := decodeObject(t, resp.Body)
+	if got["id"] != "interface-1" || got["name"] != "login api" {
+		t.Fatalf("response identity = %#v", got)
+	}
+	step, ok := got["step"].(map[string]any)
+	if !ok {
+		t.Fatalf("step = %#v, want object", got["step"])
+	}
+	if step["method"] != "POST" || step["url"] != "https://api.test/login" {
+		t.Fatalf("step response = %#v", step)
+	}
+}
+
+func TestCreateInterfaceValidationError(t *testing.T) {
+	deps := newHTTPTestDeps()
+	deps.interfaces.createFunc = func(context.Context, *interfacestore.Interface) error {
+		return interfacestore.ErrMethodRequired
+	}
+	router := NewRouter(deps.Dependencies())
+
+	body := `{"name":"login api","step":{"url":"https://api.test/login"}}`
+	resp := serveJSON(t, router, http.MethodPost, "/api/interfaces", body)
+
+	assertErrorResponse(t, resp, http.StatusBadRequest, interfacestore.ErrMethodRequired.Error())
+}
+
+func TestListInterfaces(t *testing.T) {
+	deps := newHTTPTestDeps()
+	deps.interfaces.items = []interfacestore.Interface{
+		{
+			ID:   "interface-1",
+			Name: "login api",
+			Step: scenario.Step{
+				Name:    "login",
+				Method:  "POST",
+				URL:     "https://api.test/login",
+				BodyTpl: "{}",
+				Headers: map[string]string{"Content-Type": "application/json"},
+				Extract: map[string]string{"token": "data.token"},
+			},
+			CreatedAt: testHTTPTime(),
+		},
+	}
+	router := NewRouter(deps.Dependencies())
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, authenticatedRequest(http.MethodGet, "/api/interfaces", nil))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusOK, resp.Body.String())
+	}
+	var body []struct {
+		ID   string        `json:"id"`
+		Name string        `json:"name"`
+		Step scenario.Step `json:"step"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if len(body) != 1 {
+		t.Fatalf("len(body) = %d, want 1", len(body))
+	}
+	if body[0].ID != "interface-1" || body[0].Step.Method != "POST" || body[0].Step.Extract["token"] != "data.token" {
+		t.Fatalf("interface response = %#v", body[0])
+	}
+
+	deps.interfaces.items = nil
+	empty := httptest.NewRecorder()
+	router.ServeHTTP(empty, authenticatedRequest(http.MethodGet, "/api/interfaces", nil))
+	if empty.Code != http.StatusOK || strings.TrimSpace(empty.Body.String()) != "[]" {
+		t.Fatalf("empty interfaces = status %d body %q, want 200 []", empty.Code, empty.Body.String())
+	}
 }
 
 func TestCreateScenario(t *testing.T) {
@@ -389,6 +487,30 @@ func TestLoginHTTPWithBackupCode(t *testing.T) {
 	}
 }
 
+func TestLoginHTTPRateLimit(t *testing.T) {
+	deps := newHTTPTestDeps()
+	secret := testHTTPTOTPSecret(t, "admin")
+	deps.authStore.usersByID["admin-id"] = &authstore.User{
+		ID:           "admin-id",
+		Username:     "admin",
+		PasswordHash: hashHTTPPasswordForTest(t, "correct-password"),
+		TOTPSecret:   secret,
+		TOTPEnabled:  true,
+		CreatedAt:    testHTTPTime(),
+	}
+	deps.authStore.usersByUsername["admin"] = deps.authStore.usersByID["admin-id"]
+	router := NewRouter(deps.Dependencies())
+
+	for i := 0; i < 5; i++ {
+		resp := serveJSON(t, router, http.MethodPost, "/api/auth/login", `{"username":"admin","password":"wrong-password"}`)
+		assertErrorResponse(t, resp, http.StatusUnauthorized, auth.ErrInvalidCredentials.Error())
+	}
+
+	code := currentHTTPTOTPCode(t, secret)
+	resp := serveJSON(t, router, http.MethodPost, "/api/auth/login", fmt.Sprintf(`{"username":"admin","password":"correct-password","code":%q}`, code))
+	assertErrorResponse(t, resp, http.StatusTooManyRequests, auth.ErrTooManyAttempts.Error())
+}
+
 func TestListTasks(t *testing.T) {
 	t.Run("default filter", func(t *testing.T) {
 		deps := newHTTPTestDeps()
@@ -656,12 +778,17 @@ func TestClassifyError(t *testing.T) {
 		{accountstore.ErrGroupIDRequired, http.StatusBadRequest, accountstore.ErrGroupIDRequired.Error()},
 		{accountstore.ErrUsernameRequired, http.StatusBadRequest, accountstore.ErrUsernameRequired.Error()},
 		{accountstore.ErrPasswordRequired, http.StatusBadRequest, accountstore.ErrPasswordRequired.Error()},
+		{interfacestore.ErrNameRequired, http.StatusBadRequest, interfacestore.ErrNameRequired.Error()},
+		{interfacestore.ErrMethodRequired, http.StatusBadRequest, interfacestore.ErrMethodRequired.Error()},
+		{interfacestore.ErrURLRequired, http.StatusBadRequest, interfacestore.ErrURLRequired.Error()},
 		{scenariostore.ErrNameRequired, http.StatusBadRequest, scenariostore.ErrNameRequired.Error()},
 		{scenariostore.ErrStepsRequired, http.StatusBadRequest, scenariostore.ErrStepsRequired.Error()},
 		{auth.ErrInvalidCredentials, http.StatusUnauthorized, auth.ErrInvalidCredentials.Error()},
 		{auth.ErrInvalidCode, http.StatusUnauthorized, auth.ErrInvalidCode.Error()},
 		{auth.ErrTOTPCodeRequired, http.StatusUnauthorized, auth.ErrTOTPCodeRequired.Error()},
 		{auth.ErrTOTPSetupRequired, http.StatusUnauthorized, auth.ErrTOTPSetupRequired.Error()},
+		{auth.ErrTooManyAttempts, http.StatusTooManyRequests, auth.ErrTooManyAttempts.Error()},
+		{taskmanager.ErrShuttingDown, http.StatusServiceUnavailable, taskmanager.ErrShuttingDown.Error()},
 		{authstore.ErrUsernameTaken, http.StatusBadRequest, authstore.ErrUsernameTaken.Error()},
 		{auth.ErrWeakPassword, http.StatusBadRequest, auth.ErrWeakPassword.Error()},
 		{auth.ErrTOTPAlreadyEnabled, http.StatusBadRequest, auth.ErrTOTPAlreadyEnabled.Error()},
@@ -757,6 +884,39 @@ func TestCreateTaskInvalidConfigReturnsBadRequest(t *testing.T) {
 	}
 }
 
+// TestWebSocketProgressUpgradesThroughFullRouter dials the WS progress route
+// through the complete NewRouter (access log + CORS + auth middleware all
+// wrapping the ResponseWriter). This exists specifically to catch a wrapper
+// that forwards Write/WriteHeader but not Hijack/Unwrap, which would silently
+// turn every WS upgrade into a "does not support hijacking" failure without
+// any of the other tests noticing (they exercise the WS handler directly,
+// not through this full middleware chain).
+func TestWebSocketProgressUpgradesThroughFullRouter(t *testing.T) {
+	deps := newHTTPTestDeps()
+	server := httptest.NewServer(NewRouter(deps.Dependencies()))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws/tasks/task-1/progress"
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	header := http.Header{}
+	header.Set("Cookie", (&http.Cookie{Name: sessionCookieName, Value: "session-1"}).String())
+	conn, resp, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPHeader: header})
+	if err != nil {
+		status := 0
+		if resp != nil {
+			status = resp.StatusCode
+		}
+		t.Fatalf("Dial() error = %v, status = %d", err, status)
+	}
+	defer conn.CloseNow()
+
+	if err := conn.Close(websocket.StatusNormalClosure, "test done"); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+}
+
 func TestTaskExistsFunc(t *testing.T) {
 	deps := newHTTPTestDeps()
 	deps.tasks.getFunc = func(ctx context.Context, taskID string) (*task.Task, error) {
@@ -789,6 +949,7 @@ type httpTestDeps struct {
 	tasks          *fakeHTTPTaskManager
 	accounts       *fakeHTTPAccountStore
 	results        *fakeHTTPResultStore
+	interfaces     *fakeHTTPInterfaceStore
 	scenarios      *fakeHTTPScenarioStore
 	authStore      *fakeHTTPAuthStore
 	hub            *logevent.Hub
@@ -810,12 +971,13 @@ func newHTTPTestDeps() *httpTestDeps {
 		ExpiresAt: time.Now().Add(time.Hour),
 	}
 	return &httpTestDeps{
-		tasks:     &fakeHTTPTaskManager{},
-		accounts:  &fakeHTTPAccountStore{},
-		results:   &fakeHTTPResultStore{},
-		scenarios: &fakeHTTPScenarioStore{},
-		authStore: authStore,
-		hub:       logevent.NewHub(),
+		tasks:      &fakeHTTPTaskManager{},
+		accounts:   &fakeHTTPAccountStore{},
+		results:    &fakeHTTPResultStore{},
+		interfaces: &fakeHTTPInterfaceStore{},
+		scenarios:  &fakeHTTPScenarioStore{},
+		authStore:  authStore,
+		hub:        logevent.NewHub(),
 	}
 }
 
@@ -824,6 +986,7 @@ func (d *httpTestDeps) Dependencies() Dependencies {
 		TaskManager:    d.tasks,
 		AccountStore:   d.accounts,
 		ResultStore:    d.results,
+		InterfaceStore: d.interfaces,
 		ScenarioStore:  d.scenarios,
 		AuthService:    auth.NewService(d.authStore),
 		Hub:            d.hub,
@@ -838,16 +1001,18 @@ type fakeHTTPAuthStore struct {
 	sessions            map[string]*authstore.Session
 	backupCodes         map[string][]authstore.BackupCodeRef
 	usedBackupCodeIDs   map[int64]bool
+	failedLoginAttempts map[string][]time.Time
 	markedBackupCodeIDs []int64
 }
 
 func newFakeHTTPAuthStore() *fakeHTTPAuthStore {
 	return &fakeHTTPAuthStore{
-		usersByID:         make(map[string]*authstore.User),
-		usersByUsername:   make(map[string]*authstore.User),
-		sessions:          make(map[string]*authstore.Session),
-		backupCodes:       make(map[string][]authstore.BackupCodeRef),
-		usedBackupCodeIDs: make(map[int64]bool),
+		usersByID:           make(map[string]*authstore.User),
+		usersByUsername:     make(map[string]*authstore.User),
+		sessions:            make(map[string]*authstore.Session),
+		backupCodes:         make(map[string][]authstore.BackupCodeRef),
+		usedBackupCodeIDs:   make(map[int64]bool),
+		failedLoginAttempts: make(map[string][]time.Time),
 	}
 }
 
@@ -955,6 +1120,25 @@ func (s *fakeHTTPAuthStore) DeleteSession(_ context.Context, id string) error {
 	return nil
 }
 
+func (s *fakeHTTPAuthStore) RecordFailedLoginAttempt(_ context.Context, ip string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failedLoginAttempts[ip] = append(s.failedLoginAttempts[ip], time.Now())
+	return nil
+}
+
+func (s *fakeHTTPAuthStore) CountRecentFailedLoginAttempts(_ context.Context, ip string, since time.Time) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	count := 0
+	for _, at := range s.failedLoginAttempts[ip] {
+		if !at.Before(since) {
+			count++
+		}
+	}
+	return count, nil
+}
+
 type fakeHTTPTaskManager struct {
 	mu         sync.Mutex
 	createReqs []taskmanager.CreateTaskRequest
@@ -1029,6 +1213,31 @@ func (s *fakeHTTPResultStore) ListByTaskGroupedByAccount(context.Context, string
 		return nil, s.err
 	}
 	return s.groups, nil
+}
+
+type fakeHTTPInterfaceStore struct {
+	items      []interfacestore.Interface
+	createFunc func(context.Context, *interfacestore.Interface) error
+	listFunc   func(context.Context) ([]interfacestore.Interface, error)
+}
+
+func (s *fakeHTTPInterfaceStore) Create(ctx context.Context, iface *interfacestore.Interface) error {
+	if s.createFunc != nil {
+		return s.createFunc(ctx, iface)
+	}
+	iface.ID = "interface-1"
+	iface.CreatedAt = testHTTPTime()
+	return nil
+}
+
+func (s *fakeHTTPInterfaceStore) List(ctx context.Context) ([]interfacestore.Interface, error) {
+	if s.listFunc != nil {
+		return s.listFunc(ctx)
+	}
+	if s.items == nil {
+		return []interfacestore.Interface{}, nil
+	}
+	return s.items, nil
 }
 
 type fakeHTTPScenarioStore struct {

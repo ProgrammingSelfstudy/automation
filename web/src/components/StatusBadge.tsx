@@ -1,4 +1,5 @@
 import type { TaskStatus } from '../api/client'
+import { formatTaskStatus } from '../utils/format'
 
 const STATUS_STYLE: Record<TaskStatus, string> = {
   pending: 'bg-amber-50 text-amber-700 ring-amber-200',
@@ -13,7 +14,7 @@ export default function StatusBadge({ status }: { status: TaskStatus }) {
     <span
       className={`inline-flex h-6 items-center rounded px-2 text-xs font-semibold ring-1 ${STATUS_STYLE[status]}`}
     >
-      {status}
+      {formatTaskStatus(status)}
     </span>
   )
 }

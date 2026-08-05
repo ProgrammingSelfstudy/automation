@@ -24,3 +24,10 @@ CREATE TABLE `session` (
     INDEX idx_user (user_id),
     INDEX idx_expires (expires_at)
 );
+
+CREATE TABLE login_attempt (
+    id          BIGINT AUTO_INCREMENT PRIMARY KEY,
+    ip          VARCHAR(64) NOT NULL,
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_ip_created (ip, created_at)
+);

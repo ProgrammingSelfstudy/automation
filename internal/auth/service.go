@@ -16,12 +16,14 @@ import (
 )
 
 const (
-	sessionTTL        = 7 * 24 * time.Hour
-	backupCodeCount   = 10
-	minPasswordLength = 8
-	totpIssuer        = "接口压测控制台"
-	sessionTokenBytes = 32
-	backupCodeBytes   = 10
+	sessionTTL             = 7 * 24 * time.Hour
+	backupCodeCount        = 10
+	minPasswordLength      = 8
+	maxFailedLoginAttempts = 5
+	loginLockoutWindow     = 15 * time.Minute
+	totpIssuer             = "接口压测控制台"
+	sessionTokenBytes      = 32
+	backupCodeBytes        = 10
 )
 
 var (
@@ -31,6 +33,7 @@ var (
 	ErrTOTPCodeRequired   = errors.New("two-factor verification code is required")
 	ErrInvalidCode        = errors.New("invalid verification code")
 	ErrWeakPassword       = errors.New("password must be at least 8 characters")
+	ErrTooManyAttempts    = errors.New("too many failed login attempts, try again later")
 
 	dummyPasswordHash = mustGenerateDummyPasswordHash()
 )
@@ -116,7 +119,25 @@ func (s *Service) ConfirmTOTP(ctx context.Context, username, password, code stri
 	return user, session, plainCodes, nil
 }
 
-func (s *Service) Login(ctx context.Context, username, password, code, backupCode string) (*authstore.User, *authstore.Session, error) {
+func (s *Service) Login(ctx context.Context, ip, username, password, code, backupCode string) (*authstore.User, *authstore.Session, error) {
+	count, err := s.store.CountRecentFailedLoginAttempts(ctx, ip, time.Now().Add(-loginLockoutWindow))
+	if err != nil {
+		return nil, nil, err
+	}
+	if count >= maxFailedLoginAttempts {
+		return nil, nil, ErrTooManyAttempts
+	}
+
+	user, session, err := s.loginWithCredentials(ctx, username, password, code, backupCode)
+	if errors.Is(err, ErrInvalidCredentials) || errors.Is(err, ErrInvalidCode) {
+		if recordErr := s.store.RecordFailedLoginAttempt(ctx, ip); recordErr != nil {
+			return nil, nil, recordErr
+		}
+	}
+	return user, session, err
+}
+
+func (s *Service) loginWithCredentials(ctx context.Context, username, password, code, backupCode string) (*authstore.User, *authstore.Session, error) {
 	user, err := s.getUserByUsernameWithPassword(ctx, username, password)
 	if err != nil {
 		return nil, nil, err

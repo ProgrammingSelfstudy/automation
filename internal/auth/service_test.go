@@ -14,6 +14,8 @@ import (
 	"interface-load-test/internal/authstore"
 )
 
+const testLoginIP = "203.0.113.10"
+
 func TestCreateUser(t *testing.T) {
 	t.Run("weak password", func(t *testing.T) {
 		service := NewService(newFakeAuthStore())
@@ -52,8 +54,8 @@ func TestLoginInvalidCredentialsAreIndistinguishable(t *testing.T) {
 	}
 	service := NewService(store)
 
-	missingUser, missingSession, missingErr := service.Login(context.Background(), "missing", "correct-password", "123456", "")
-	badPasswordUser, badPasswordSession, badPasswordErr := service.Login(context.Background(), "admin", "wrong-password", "123456", "")
+	missingUser, missingSession, missingErr := service.Login(context.Background(), testLoginIP, "missing", "correct-password", "123456", "")
+	badPasswordUser, badPasswordSession, badPasswordErr := service.Login(context.Background(), testLoginIP, "admin", "wrong-password", "123456", "")
 
 	if missingUser != nil || missingSession != nil || badPasswordUser != nil || badPasswordSession != nil {
 		t.Fatalf("invalid credential returns = (%#v,%#v) and (%#v,%#v), want nils", missingUser, missingSession, badPasswordUser, badPasswordSession)
@@ -73,7 +75,7 @@ func TestLoginRequiresTOTPSetup(t *testing.T) {
 	}
 	service := NewService(store)
 
-	user, session, err := service.Login(context.Background(), "admin", "correct-password", "123456", "")
+	user, session, err := service.Login(context.Background(), testLoginIP, "admin", "correct-password", "123456", "")
 	if user != nil || session != nil {
 		t.Fatalf("Login() = (%#v,%#v), want nils", user, session)
 	}
@@ -95,7 +97,7 @@ func TestLoginWithTOTPCode(t *testing.T) {
 	service := NewService(store)
 	code := currentTOTPCode(t, secret)
 
-	user, session, err := service.Login(context.Background(), "admin", "correct-password", code, "")
+	user, session, err := service.Login(context.Background(), testLoginIP, "admin", "correct-password", code, "")
 	if err != nil {
 		t.Fatalf("Login() error = %v", err)
 	}
@@ -103,7 +105,7 @@ func TestLoginWithTOTPCode(t *testing.T) {
 		t.Fatalf("Login() = (%#v,%#v), want user and session", user, session)
 	}
 
-	badUser, badSession, err := service.Login(context.Background(), "admin", "correct-password", wrongTOTPCode(code), "")
+	badUser, badSession, err := service.Login(context.Background(), testLoginIP, "admin", "correct-password", wrongTOTPCode(code), "")
 	if badUser != nil || badSession != nil {
 		t.Fatalf("bad Login() = (%#v,%#v), want nils", badUser, badSession)
 	}
@@ -123,7 +125,7 @@ func TestLoginRequiresCodeForEnabledTOTP(t *testing.T) {
 	}
 	service := NewService(store)
 
-	_, _, err := service.Login(context.Background(), "admin", "correct-password", "", "")
+	_, _, err := service.Login(context.Background(), testLoginIP, "admin", "correct-password", "", "")
 	if !errors.Is(err, ErrTOTPCodeRequired) {
 		t.Fatalf("error = %v, want %v", err, ErrTOTPCodeRequired)
 	}
@@ -144,7 +146,7 @@ func TestLoginWithBackupCodeConsumesCode(t *testing.T) {
 	}
 	service := NewService(store)
 
-	_, session, err := service.Login(context.Background(), "admin", "correct-password", "", "RIGHT-CODE")
+	_, session, err := service.Login(context.Background(), testLoginIP, "admin", "correct-password", "", "RIGHT-CODE")
 	if err != nil {
 		t.Fatalf("Login() error = %v", err)
 	}
@@ -155,7 +157,7 @@ func TestLoginWithBackupCodeConsumesCode(t *testing.T) {
 		t.Fatalf("markedBackupCodeIDs = %#v, want [2]", store.markedBackupCodeIDs)
 	}
 
-	_, _, err = service.Login(context.Background(), "admin", "correct-password", "", "RIGHT-CODE")
+	_, _, err = service.Login(context.Background(), testLoginIP, "admin", "correct-password", "", "RIGHT-CODE")
 	if !errors.Is(err, ErrInvalidCode) {
 		t.Fatalf("second Login() error = %v, want %v", err, ErrInvalidCode)
 	}
@@ -176,7 +178,7 @@ func TestLoginWithBackupCodeRejectsConcurrentConsume(t *testing.T) {
 	store.markBackupCodeErrByID[2] = authstore.ErrNotFound
 	service := NewService(store)
 
-	user, session, err := service.Login(context.Background(), "admin", "correct-password", "", "RIGHT-CODE")
+	user, session, err := service.Login(context.Background(), testLoginIP, "admin", "correct-password", "", "RIGHT-CODE")
 	if user != nil || session != nil {
 		t.Fatalf("Login() = (%#v,%#v), want nils", user, session)
 	}
@@ -185,6 +187,145 @@ func TestLoginWithBackupCodeRejectsConcurrentConsume(t *testing.T) {
 	}
 	if len(store.markedBackupCodeIDs) != 0 {
 		t.Fatalf("markedBackupCodeIDs = %#v, want empty", store.markedBackupCodeIDs)
+	}
+}
+
+func TestLoginRateLimitRejectsBeforeCredentials(t *testing.T) {
+	store := newFakeAuthStore()
+	secret := testTOTPSecret(t)
+	store.usersByUsername["admin"] = &authstore.User{
+		ID:           "user-1",
+		Username:     "admin",
+		PasswordHash: hashPasswordForTest(t, "correct-password"),
+		TOTPEnabled:  true,
+		TOTPSecret:   secret,
+	}
+	store.seedFailedLoginAttempts(testLoginIP, maxFailedLoginAttempts)
+	service := NewService(store)
+
+	user, session, err := service.Login(context.Background(), testLoginIP, "admin", "correct-password", currentTOTPCode(t, secret), "")
+	if user != nil || session != nil {
+		t.Fatalf("Login() = (%#v,%#v), want nils", user, session)
+	}
+	if !errors.Is(err, ErrTooManyAttempts) {
+		t.Fatalf("Login() error = %v, want %v", err, ErrTooManyAttempts)
+	}
+	if len(store.sessions) != 0 {
+		t.Fatalf("sessions = %#v, want none", store.sessions)
+	}
+}
+
+func TestLoginRateLimitAllowsBelowThreshold(t *testing.T) {
+	store := newFakeAuthStore()
+	secret := testTOTPSecret(t)
+	store.usersByUsername["admin"] = &authstore.User{
+		ID:           "user-1",
+		Username:     "admin",
+		PasswordHash: hashPasswordForTest(t, "correct-password"),
+		TOTPEnabled:  true,
+		TOTPSecret:   secret,
+	}
+	store.seedFailedLoginAttempts(testLoginIP, maxFailedLoginAttempts-1)
+	service := NewService(store)
+
+	user, session, err := service.Login(context.Background(), testLoginIP, "admin", "correct-password", currentTOTPCode(t, secret), "")
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+	if user == nil || session == nil {
+		t.Fatalf("Login() = (%#v,%#v), want success", user, session)
+	}
+}
+
+func TestLoginDoesNotRecordTOTPFlowPrompts(t *testing.T) {
+	t.Run("setup required", func(t *testing.T) {
+		store := newFakeAuthStore()
+		store.usersByUsername["admin"] = &authstore.User{
+			ID:           "user-1",
+			Username:     "admin",
+			PasswordHash: hashPasswordForTest(t, "correct-password"),
+			TOTPEnabled:  false,
+		}
+		service := NewService(store)
+
+		_, _, err := service.Login(context.Background(), testLoginIP, "admin", "correct-password", "123456", "")
+		if !errors.Is(err, ErrTOTPSetupRequired) {
+			t.Fatalf("Login() error = %v, want %v", err, ErrTOTPSetupRequired)
+		}
+		if got := store.recordedFailedLoginAttempts(testLoginIP); got != 0 {
+			t.Fatalf("recorded attempts = %d, want 0", got)
+		}
+	})
+
+	t.Run("code required", func(t *testing.T) {
+		store := newFakeAuthStore()
+		store.usersByUsername["admin"] = &authstore.User{
+			ID:           "user-1",
+			Username:     "admin",
+			PasswordHash: hashPasswordForTest(t, "correct-password"),
+			TOTPEnabled:  true,
+			TOTPSecret:   testTOTPSecret(t),
+		}
+		service := NewService(store)
+
+		_, _, err := service.Login(context.Background(), testLoginIP, "admin", "correct-password", "", "")
+		if !errors.Is(err, ErrTOTPCodeRequired) {
+			t.Fatalf("Login() error = %v, want %v", err, ErrTOTPCodeRequired)
+		}
+		if got := store.recordedFailedLoginAttempts(testLoginIP); got != 0 {
+			t.Fatalf("recorded attempts = %d, want 0", got)
+		}
+	})
+}
+
+func TestLoginRecordsCredentialFailures(t *testing.T) {
+	store := newFakeAuthStore()
+	secret := testTOTPSecret(t)
+	store.usersByUsername["admin"] = &authstore.User{
+		ID:           "user-1",
+		Username:     "admin",
+		PasswordHash: hashPasswordForTest(t, "correct-password"),
+		TOTPEnabled:  true,
+		TOTPSecret:   secret,
+	}
+	service := NewService(store)
+
+	_, _, err := service.Login(context.Background(), testLoginIP, "admin", "wrong-password", "123456", "")
+	if !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("wrong password error = %v, want %v", err, ErrInvalidCredentials)
+	}
+	_, _, err = service.Login(context.Background(), testLoginIP, "admin", "correct-password", wrongTOTPCode(currentTOTPCode(t, secret)), "")
+	if !errors.Is(err, ErrInvalidCode) {
+		t.Fatalf("wrong TOTP error = %v, want %v", err, ErrInvalidCode)
+	}
+	_, _, err = service.Login(context.Background(), testLoginIP, "admin", "correct-password", "", "WRONG-CODE")
+	if !errors.Is(err, ErrInvalidCode) {
+		t.Fatalf("wrong backup code error = %v, want %v", err, ErrInvalidCode)
+	}
+	if got := store.recordedFailedLoginAttempts(testLoginIP); got != 3 {
+		t.Fatalf("recorded attempts = %d, want 3", got)
+	}
+}
+
+func TestLoginFailuresAreScopedByIP(t *testing.T) {
+	store := newFakeAuthStore()
+	secret := testTOTPSecret(t)
+	store.usersByUsername["admin"] = &authstore.User{
+		ID:           "user-1",
+		Username:     "admin",
+		PasswordHash: hashPasswordForTest(t, "correct-password"),
+		TOTPEnabled:  true,
+		TOTPSecret:   secret,
+	}
+	store.seedFailedLoginAttempts("203.0.113.20", maxFailedLoginAttempts)
+	service := NewService(store)
+
+	user, session, err := service.Login(context.Background(), testLoginIP, "admin", "correct-password", currentTOTPCode(t, secret), "")
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+	if user == nil || session == nil {
+		t.Fatalf("Login() = (%#v,%#v), want success for unaffected IP", user, session)
 	}
 }
 
@@ -259,7 +400,7 @@ func BenchmarkLoginInvalidCredentialsTiming(b *testing.B) {
 
 	b.Run("missing user", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			_, _, err := service.Login(context.Background(), "missing", "wrong-password", "123456", "")
+			_, _, err := service.Login(context.Background(), fmt.Sprintf("203.0.113.%d", i), "missing", "wrong-password", "123456", "")
 			if !errors.Is(err, ErrInvalidCredentials) {
 				b.Fatalf("Login() error = %v, want %v", err, ErrInvalidCredentials)
 			}
@@ -268,7 +409,7 @@ func BenchmarkLoginInvalidCredentialsTiming(b *testing.B) {
 
 	b.Run("bad password", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			_, _, err := service.Login(context.Background(), "admin", "wrong-password", "123456", "")
+			_, _, err := service.Login(context.Background(), fmt.Sprintf("198.51.100.%d", i), "admin", "wrong-password", "123456", "")
 			if !errors.Is(err, ErrInvalidCredentials) {
 				b.Fatalf("Login() error = %v, want %v", err, ErrInvalidCredentials)
 			}
@@ -285,6 +426,7 @@ type fakeAuthStore struct {
 	usedBackupCodeIDs     map[int64]bool
 	markBackupCodeErrByID map[int64]error
 	markedBackupCodeIDs   []int64
+	failedLoginAttempts   map[string][]time.Time
 	createUserErr         error
 }
 
@@ -296,6 +438,7 @@ func newFakeAuthStore() *fakeAuthStore {
 		backupCodes:           make(map[string][]authstore.BackupCodeRef),
 		usedBackupCodeIDs:     make(map[int64]bool),
 		markBackupCodeErrByID: make(map[int64]error),
+		failedLoginAttempts:   make(map[string][]time.Time),
 	}
 }
 
@@ -414,6 +557,39 @@ func (s *fakeAuthStore) DeleteSession(_ context.Context, id string) error {
 	defer s.mu.Unlock()
 	delete(s.sessions, id)
 	return nil
+}
+
+func (s *fakeAuthStore) RecordFailedLoginAttempt(_ context.Context, ip string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failedLoginAttempts[ip] = append(s.failedLoginAttempts[ip], time.Now())
+	return nil
+}
+
+func (s *fakeAuthStore) CountRecentFailedLoginAttempts(_ context.Context, ip string, since time.Time) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	count := 0
+	for _, at := range s.failedLoginAttempts[ip] {
+		if !at.Before(since) {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (s *fakeAuthStore) seedFailedLoginAttempts(ip string, count int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := 0; i < count; i++ {
+		s.failedLoginAttempts[ip] = append(s.failedLoginAttempts[ip], time.Now())
+	}
+}
+
+func (s *fakeAuthStore) recordedFailedLoginAttempts(ip string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.failedLoginAttempts[ip])
 }
 
 func hashPasswordForTest(t *testing.T, password string) string {

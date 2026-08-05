@@ -7,18 +7,27 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
+	"time"
 
 	"interface-load-test/internal/accountstore"
 	"interface-load-test/internal/auth"
 	"interface-load-test/internal/authstore"
 	"interface-load-test/internal/httpapi"
+	"interface-load-test/internal/interfacestore"
 	"interface-load-test/internal/loadtest"
 	"interface-load-test/internal/logevent"
 	"interface-load-test/internal/resultstore"
 	"interface-load-test/internal/scenariostore"
 	"interface-load-test/internal/task"
 	"interface-load-test/internal/taskmanager"
+)
+
+const (
+	defaultHTTPShutdownTimeout = 10 * time.Second
+	defaultTaskShutdownTimeout = 30 * time.Second
 )
 
 func main() {
@@ -44,6 +53,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("create scenario store: %v", err)
 	}
+	interfaceStore, err := interfacestore.NewMySQLStore(dsn)
+	if err != nil {
+		log.Fatalf("create interface store: %v", err)
+	}
 	authStore, err := authstore.NewMySQLStore(dsn)
 	if err != nil {
 		log.Fatalf("create auth store: %v", err)
@@ -60,6 +73,7 @@ func main() {
 		TaskManager:    manager,
 		AccountStore:   accountStore,
 		ResultStore:    resultStore,
+		InterfaceStore: interfaceStore,
 		ScenarioStore:  scenarioStore,
 		AuthService:    authService,
 		Hub:            hub,
@@ -68,8 +82,56 @@ func main() {
 	})
 
 	addr := envOrDefault("LISTEN_ADDR", ":8080")
-	log.Printf("listening on %s", addr)
-	log.Fatal(http.ListenAndServe(addr, router))
+	server := &http.Server{
+		Addr:    addr,
+		Handler: router,
+	}
+	serverErr := make(chan error, 1)
+	go func() {
+		log.Printf("listening on %s", addr)
+		serverErr <- server.ListenAndServe()
+	}()
+
+	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	select {
+	case err := <-serverErr:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("http server: %v", err)
+		}
+	case <-signalCtx.Done():
+		stop()
+		log.Printf("shutdown signal received")
+
+		// Stop accepting new HTTP requests (and let in-flight ones finish) before
+		// telling the task manager to drain, so no new task can slip in through
+		// POST /api/tasks while we're waiting for existing ones to stop.
+		//
+		// Known limitation: http.Server.Shutdown does not wait on hijacked
+		// connections, and a WebSocket upgrade counts as hijacked — so a browser
+		// watching /ws/tasks/{id}/progress will see its connection cut abruptly
+		// during shutdown rather than closed gracefully. Fixing that would require
+		// tracking live WS connections ourselves; not done here.
+		shutdownHTTP(server, durationEnvOrDefault("HTTP_SHUTDOWN_TIMEOUT", defaultHTTPShutdownTimeout))
+		shutdownTasks(manager, durationEnvOrDefault("TASK_SHUTDOWN_TIMEOUT", defaultTaskShutdownTimeout))
+	}
+}
+
+func shutdownHTTP(server *http.Server, timeout time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if err := server.Shutdown(ctx); err != nil {
+		log.Printf("http shutdown: %v", err)
+	}
+}
+
+func shutdownTasks(manager *taskmanager.Manager, timeout time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if err := manager.Shutdown(ctx); err != nil {
+		log.Printf("task shutdown: %v", err)
+	}
 }
 
 func bootstrapAdmin(ctx context.Context, store authstore.Store, service *auth.Service) {
@@ -112,6 +174,19 @@ func envOrDefault(name string, defaultValue string) string {
 		return defaultValue
 	}
 	return value
+}
+
+func durationEnvOrDefault(name string, defaultValue time.Duration) time.Duration {
+	value := os.Getenv(name)
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		log.Printf("%s=%q is not a valid duration, using default %s", name, value, defaultValue)
+		return defaultValue
+	}
+	return parsed
 }
 
 func csvEnvOrDefault(name string, defaultValue string) []string {
