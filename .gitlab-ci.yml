@@ -1,0 +1,61 @@
+stages:
+  - verify
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+backend:
+  stage: verify
+  image: golang:1.25
+  variables:
+    GOPATH: $CI_PROJECT_DIR/.go
+  cache:
+    key:
+      files:
+        - go.sum
+    paths:
+      - .go/pkg/mod
+  script:
+    - test -z "$(gofmt -l .)"
+    - go vet ./...
+    - go build ./...
+    - go test ./... -race
+
+schema-check:
+  stage: verify
+  image: mysql:8.0
+  services:
+    - name: mysql:8.0
+      alias: mysql
+  variables:
+    MYSQL_ROOT_PASSWORD: ci-password
+    MYSQL_DATABASE: loadtest
+  script:
+    - |
+      for i in $(seq 1 30); do
+        mysqladmin ping -h mysql -uroot -p"$MYSQL_ROOT_PASSWORD" --silent && break
+        sleep 2
+      done
+    - |
+      for f in internal/accountstore/schema.sql internal/resultstore/schema.sql internal/taskmanager/schema.sql internal/scenariostore/schema.sql; do
+        echo "applying $f"
+        mysql -h mysql -uroot -p"$MYSQL_ROOT_PASSWORD" loadtest < "$f"
+      done
+    - mysql -h mysql -uroot -p"$MYSQL_ROOT_PASSWORD" loadtest -e "SHOW TABLES;"
+
+frontend:
+  stage: verify
+  image: node:22
+  cache:
+    key:
+      files:
+        - web/package-lock.json
+    paths:
+      - web/node_modules
+  script:
+    - cd web
+    - npm ci
+    - npm run lint
+    - npm run build
