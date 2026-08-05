@@ -5,7 +5,7 @@ endif
 
 .PHONY: db-up db-down db-reset db-logs key build run test web-dev
 
-## 起本地 MySQL（首次启动会自动跑三个 schema.sql）
+## 起本地 MySQL（首次启动会自动跑各包的 schema.sql）
 db-up:
 	docker compose up -d mysql
 

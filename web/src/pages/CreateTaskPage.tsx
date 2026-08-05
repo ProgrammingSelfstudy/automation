@@ -13,14 +13,12 @@ type TaskForm = {
   name: string
   account_group_id: string
   concurrency: number
-  created_by: string
 }
 
 const initialForm: TaskForm = {
   name: '',
   account_group_id: '',
   concurrency: 1,
-  created_by: '',
 }
 
 export default function CreateTaskPage() {
@@ -64,7 +62,6 @@ export default function CreateTaskPage() {
       name: form.name,
       account_group_id: form.account_group_id,
       concurrency: form.concurrency,
-      created_by: form.created_by,
       config: {
         scenario: {
           steps,
@@ -135,14 +132,6 @@ export default function CreateTaskPage() {
               type="number"
               value={form.concurrency}
               onChange={(event) => setForm({ ...form, concurrency: Number(event.target.value) })}
-            />
-          </label>
-          <label className="space-y-1">
-            <span className="field-label">created_by</span>
-            <input
-              className="input"
-              value={form.created_by}
-              onChange={(event) => setForm({ ...form, created_by: event.target.value })}
             />
           </label>
         </div>

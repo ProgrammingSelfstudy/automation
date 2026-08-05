@@ -1,13 +1,17 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
+	"errors"
 	"log"
 	"net/http"
 	"os"
 	"strings"
 
 	"interface-load-test/internal/accountstore"
+	"interface-load-test/internal/auth"
+	"interface-load-test/internal/authstore"
 	"interface-load-test/internal/httpapi"
 	"interface-load-test/internal/loadtest"
 	"interface-load-test/internal/logevent"
@@ -40,6 +44,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("create scenario store: %v", err)
 	}
+	authStore, err := authstore.NewMySQLStore(dsn)
+	if err != nil {
+		log.Fatalf("create auth store: %v", err)
+	}
+	authService := auth.NewService(authStore)
+	bootstrapAdmin(context.Background(), authStore, authService)
 
 	hub := logevent.NewHub()
 	registry := task.NewModuleRegistry()
@@ -51,13 +61,32 @@ func main() {
 		AccountStore:   accountStore,
 		ResultStore:    resultStore,
 		ScenarioStore:  scenarioStore,
+		AuthService:    authService,
 		Hub:            hub,
 		AllowedOrigins: csvEnvOrDefault("ALLOWED_ORIGINS", "http://localhost:5173"),
+		CookieSecure:   boolEnv("COOKIE_SECURE", false),
 	})
 
 	addr := envOrDefault("LISTEN_ADDR", ":8080")
 	log.Printf("listening on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, router))
+}
+
+func bootstrapAdmin(ctx context.Context, store authstore.Store, service *auth.Service) {
+	username := os.Getenv("BOOTSTRAP_ADMIN_USERNAME")
+	if username == "" {
+		return
+	}
+	password := mustEnv("BOOTSTRAP_ADMIN_PASSWORD")
+	if _, err := store.GetUserByUsername(ctx, username); err == nil {
+		return
+	} else if !errors.Is(err, authstore.ErrNotFound) {
+		log.Fatalf("bootstrap admin lookup: %v", err)
+	}
+	if _, err := service.CreateUser(ctx, username, password); err != nil {
+		log.Fatalf("bootstrap admin user: %v", err)
+	}
+	log.Printf("bootstrap admin user %q created; log in and set up 2FA", username)
 }
 
 func mustEnv(name string) string {
@@ -96,4 +125,12 @@ func csvEnvOrDefault(name string, defaultValue string) []string {
 		}
 	}
 	return out
+}
+
+func boolEnv(name string, defaultValue bool) bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
+	if value == "" {
+		return defaultValue
+	}
+	return value == "1" || value == "true" || value == "yes" || value == "on"
 }

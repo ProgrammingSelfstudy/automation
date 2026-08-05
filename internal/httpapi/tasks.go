@@ -23,7 +23,6 @@ type createTaskRequest struct {
 	Config         json.RawMessage `json:"config"`
 	AccountGroupID string          `json:"account_group_id"`
 	Concurrency    int             `json:"concurrency"`
-	CreatedBy      string          `json:"created_by"`
 }
 
 type taskResponse struct {
@@ -75,6 +74,11 @@ func (h *handler) createTask(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, "account_group_id is required")
 		return
 	}
+	user := currentUser(r.Context())
+	if user == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
 
 	accounts, err := h.deps.AccountStore.ListByGroup(r.Context(), req.AccountGroupID)
 	if err != nil {
@@ -89,7 +93,7 @@ func (h *handler) createTask(w http.ResponseWriter, r *http.Request) {
 		Config:      req.Config,
 		Accounts:    poolAccounts,
 		Concurrency: req.Concurrency,
-		CreatedBy:   req.CreatedBy,
+		CreatedBy:   user.Username,
 	})
 	if err != nil {
 		writeError(w, err)
