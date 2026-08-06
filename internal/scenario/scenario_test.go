@@ -433,6 +433,30 @@ func TestMergeHeadersAppliesEnvironmentDefaultsThenStepOverrides(t *testing.T) {
 	}
 }
 
+func TestResolveURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		baseURL string
+		want    string
+	}{
+		{name: "relative path with base", url: "/oauth/token", baseURL: "http://127.0.0.1:9091", want: "http://127.0.0.1:9091/oauth/token"},
+		{name: "relative path without leading slash", url: "oauth/token", baseURL: "http://127.0.0.1:9091", want: "http://127.0.0.1:9091/oauth/token"},
+		{name: "base with trailing slash", url: "/oauth/token", baseURL: "http://127.0.0.1:9091/", want: "http://127.0.0.1:9091/oauth/token"},
+		{name: "already absolute http url untouched", url: "http://other.test/x", baseURL: "http://127.0.0.1:9091", want: "http://other.test/x"},
+		{name: "already absolute https url untouched", url: "https://other.test/x", baseURL: "http://127.0.0.1:9091", want: "https://other.test/x"},
+		{name: "empty base url is a no-op", url: "/oauth/token", baseURL: "", want: "/oauth/token"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ResolveURL(tt.url, tt.baseURL); got != tt.want {
+				t.Fatalf("ResolveURL(%q, %q) = %q, want %q", tt.url, tt.baseURL, got, tt.want)
+			}
+		})
+	}
+}
+
 type fakeHTTPResponse struct {
 	statusCode int
 	body       string

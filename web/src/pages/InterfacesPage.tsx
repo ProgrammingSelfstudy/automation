@@ -7,7 +7,9 @@ import type { EnvironmentResponse, InterfaceResponse, ScenarioStep, TrySendInter
 import SlideOver from '../components/SlideOver'
 import StepFields from '../components/StepFields'
 import { formatDateTime, formatNumber, getErrorMessage } from '../utils/format'
+import { loadGlobalHeaders, loadGlobalSignKey, loadGlobalToken } from '../utils/globalVariables'
 import { newScenarioStep } from '../utils/scenario'
+import { computeAppServerSign, parseFormBody, randomNonce } from '../utils/sign'
 
 export default function InterfacesPage() {
   const queryClient = useQueryClient()
@@ -20,6 +22,7 @@ export default function InterfacesPage() {
   const [editStep, setEditStep] = useState<ScenarioStep>(() => newScenarioStep(0))
   const [editError, setEditError] = useState('')
   const [previewEnvironmentID, setPreviewEnvironmentID] = useState('')
+  const [signSecretKey, setSignSecretKey] = useState('')
   const [trySendResult, setTrySendResult] = useState<TrySendInterfaceResponse | null>(null)
   const [trySendError, setTrySendError] = useState('')
   const [error, setError] = useState('')
@@ -102,6 +105,7 @@ export default function InterfacesPage() {
     setEditName(item.name)
     setEditStep(item.step)
     setEditError('')
+    setSignSecretKey(loadGlobalSignKey())
     setTrySendResult(null)
     setTrySendError('')
   }
@@ -110,6 +114,7 @@ export default function InterfacesPage() {
     setSelectedInterface(null)
     setDetailEditing(false)
     setEditError('')
+    setSignSecretKey('')
     setTrySendResult(null)
     setTrySendError('')
   }
@@ -135,8 +140,66 @@ export default function InterfacesPage() {
   function sendInterfaceStep(stepToSend: ScenarioStep) {
     setTrySendResult(null)
     setTrySendError('')
+
+    // {{.global.X}} only exists on the client (the backend template engine has
+    // no "global" scope), so it has to be resolved here before sending no
+    // matter what. {{.env.X}} is deliberately left untouched — the backend
+    // still resolves those itself via environment_id, same as before.
+    // Global headers (Authorization/deviceId/os/... shared across every
+    // interface) apply as a base layer — the interface's own headers win on
+    // key collision, same override rule as environment default headers.
+    const globalOnlyScopes: TemplateScopes = { env: {}, global: globalScope() }
+    let stepPayload: ScenarioStep = {
+      ...stepToSend,
+      url: resolveEnvRefs(stepToSend.url, globalOnlyScopes),
+      body_tpl: resolveEnvRefs(stepToSend.body_tpl, globalOnlyScopes),
+      headers: resolveEnvRecord({ ...loadGlobalHeaders(), ...stepToSend.headers }, globalOnlyScopes),
+    }
+
+    // X-Timestamp/X-Nonce are always generated fresh at send time, signing
+    // key or not — plenty of APIs want these headers without a full request
+    // signature. Generated once here so the signing block below (if it runs)
+    // signs the exact same values that are actually sent.
+    const timestamp = Date.now().toString()
+    const nonce = randomNonce()
+    stepPayload = {
+      ...stepPayload,
+      headers: { ...stepPayload.headers, 'X-Timestamp': timestamp, 'X-Nonce': nonce },
+    }
+
+    // Authorization is unconditionally overwritten with the cached global
+    // token on every send when a token is set — deliberately chosen this way
+    // even though it means an interface that needs its own Authorization
+    // (e.g. Basic client-id/secret on a login endpoint) gets clobbered while
+    // a global token is configured; clear the Token field in "全局变量" before
+    // testing those.
+    const globalToken = loadGlobalToken()
+    if (globalToken !== '') {
+      stepPayload = {
+        ...stepPayload,
+        headers: { ...stepPayload.headers, Authorization: `Bearer ${globalToken}` },
+      }
+    }
+
+    if (signSecretKey.trim() !== '') {
+      // Legacy app-server device signature: the secret key only ever lives in
+      // this component's state (never persisted, never sent to our backend).
+      // We compute X-Sign here and send it as a literal header value,
+      // matching AppServerSigner.sign() on the target service.
+      const envVariables = environments.find((env) => env.id === previewEnvironmentID)?.variables ?? {}
+      const resolvedBody = resolveEnvRefs(stepPayload.body_tpl, { env: envVariables, global: globalScope() })
+      const sign = computeAppServerSign(parseFormBody(resolvedBody), nonce, timestamp, signSecretKey)
+      stepPayload = {
+        ...stepPayload,
+        headers: {
+          ...stepPayload.headers,
+          'X-Sign': sign,
+        },
+      }
+    }
+
     trySendMutation.mutate({
-      step: stepToSend,
+      step: stepPayload,
       environmentID: previewEnvironmentID,
     })
   }
@@ -243,8 +306,10 @@ export default function InterfacesPage() {
                 environments={environments}
                 isSending={trySendMutation.isPending}
                 selectedEnvironmentID={previewEnvironmentID}
+                signSecretKey={signSecretKey}
                 onEnvironmentChange={changePreviewEnvironment}
                 onSend={() => sendInterfaceStep(editStep)}
+                onSignSecretKeyChange={setSignSecretKey}
               />
 
               <label className="block space-y-1">
@@ -273,11 +338,13 @@ export default function InterfacesPage() {
               isSending={trySendMutation.isPending}
               item={selectedInterface}
               selectedEnvironmentID={previewEnvironmentID}
+              signSecretKey={signSecretKey}
               trySendError={trySendError}
               trySendResult={trySendResult}
               onEdit={startInterfaceEdit}
               onEnvironmentChange={changePreviewEnvironment}
               onSend={() => sendInterfaceStep(selectedInterface.step)}
+              onSignSecretKeyChange={setSignSecretKey}
             />
           )
         ) : null}
@@ -291,29 +358,33 @@ function InterfaceDetail({
   environments,
   isSending,
   selectedEnvironmentID,
+  signSecretKey,
   trySendError,
   trySendResult,
   onEnvironmentChange,
   onEdit,
   onSend,
+  onSignSecretKeyChange,
 }: {
   item: InterfaceResponse
   environments: EnvironmentResponse[]
   isSending: boolean
   selectedEnvironmentID: string
+  signSecretKey: string
   trySendError: string
   trySendResult: TrySendInterfaceResponse | null
   onEnvironmentChange: (id: string) => void
   onEdit: () => void
   onSend: () => void
+  onSignSecretKeyChange: (value: string) => void
 }) {
   const previewEnvironment = environments.find((env) => env.id === selectedEnvironmentID)
-  const previewVariables = previewEnvironment?.variables ?? {}
+  const previewScopes: TemplateScopes = { env: previewEnvironment?.variables ?? {}, global: globalScope() }
   const previewStep = {
     ...item.step,
-    url: resolveEnvRefs(item.step.url, previewVariables),
-    body_tpl: resolveEnvRefs(item.step.body_tpl, previewVariables),
-    headers: resolveEnvRecord(item.step.headers, previewVariables),
+    url: resolveRequestURL(resolveEnvRefs(item.step.url, previewScopes), previewEnvironment?.variables.BASE_URL ?? ''),
+    body_tpl: resolveEnvRefs(item.step.body_tpl, previewScopes),
+    headers: resolveEnvRecord({ ...loadGlobalHeaders(), ...item.step.headers }, previewScopes),
   }
 
   return (
@@ -322,9 +393,11 @@ function InterfaceDetail({
         environments={environments}
         isSending={isSending}
         selectedEnvironmentID={selectedEnvironmentID}
+        signSecretKey={signSecretKey}
         onEdit={onEdit}
         onEnvironmentChange={onEnvironmentChange}
         onSend={onSend}
+        onSignSecretKeyChange={onSignSecretKeyChange}
       />
 
       <DetailBlock label="名称">
@@ -368,34 +441,51 @@ function InterfaceDetailActions({
   environments,
   isSending,
   selectedEnvironmentID,
+  signSecretKey,
   onEnvironmentChange,
   onEdit,
   onSend,
+  onSignSecretKeyChange,
 }: {
   environments: EnvironmentResponse[]
   isSending: boolean
   selectedEnvironmentID: string
+  signSecretKey: string
   onEnvironmentChange: (id: string) => void
   onEdit?: () => void
   onSend: () => void
+  onSignSecretKeyChange: (value: string) => void
 }) {
   return (
-    <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-      <label className="block min-w-0 flex-1 space-y-1">
-        <span className="field-label">预览环境</span>
-        <select
-          className="input"
-          value={selectedEnvironmentID}
-          onChange={(event) => onEnvironmentChange(event.target.value)}
-        >
-          <option value="">不使用环境</option>
-          {environments.map((env) => (
-            <option key={env.id} value={env.id}>
-              {env.name}
-            </option>
-          ))}
-        </select>
-      </label>
+    <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+      <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row">
+        <label className="block min-w-0 flex-1 space-y-1">
+          <span className="field-label">预览环境</span>
+          <select
+            className="input"
+            value={selectedEnvironmentID}
+            onChange={(event) => onEnvironmentChange(event.target.value)}
+          >
+            <option value="">不使用环境</option>
+            {environments.map((env) => (
+              <option key={env.id} value={env.id}>
+                {env.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block min-w-0 flex-1 space-y-1">
+          <span className="field-label">签名密钥</span>
+          <input
+            autoComplete="off"
+            className="input"
+            placeholder="仅本地计算 X-Sign，不会发送或保存"
+            type="password"
+            value={signSecretKey}
+            onChange={(event) => onSignSecretKeyChange(event.target.value)}
+          />
+        </label>
+      </div>
       <div className="flex shrink-0 flex-wrap items-center gap-2">
         {onEdit ? (
           <button className="btn btn-secondary" type="button" onClick={onEdit}>
@@ -519,12 +609,38 @@ function TrySendResultPanel({ error, result }: { error: string; result: TrySendI
   )
 }
 
-function resolveEnvRefs(text: string, variables: Record<string, string>) {
-  return text.replace(/\{\{\s*\.env\.(\w+)\s*\}\}/g, (match, key: string) =>
-    key in variables ? variables[key] : match,
-  )
+type TemplateScopes = {
+  env: Record<string, string>
+  global: Record<string, string>
 }
 
-function resolveEnvRecord(values: Record<string, string>, variables: Record<string, string>) {
-  return Object.fromEntries(Object.entries(values).map(([key, value]) => [key, resolveEnvRefs(value, variables)]))
+function globalScope(): Record<string, string> {
+  return { TOKEN: loadGlobalToken() }
+}
+
+// resolveEnvRefs is a client-side preview/pre-send resolver — it only
+// understands the plain {{.env.KEY}}/{{.global.KEY}} data-lookup form, not
+// the full Go text/template syntax the backend renders (function calls like
+// {{ sortedFormParams ... }} are left untouched and resolved server-side).
+function resolveEnvRefs(text: string, scopes: TemplateScopes) {
+  return text.replace(/\{\{\s*\.(env|global)\.(\w+)\s*\}\}/g, (match, scope: 'env' | 'global', key: string) => {
+    const source = scopes[scope]
+    return key in source ? source[key] : match
+  })
+}
+
+function resolveEnvRecord(values: Record<string, string>, scopes: TemplateScopes) {
+  return Object.fromEntries(Object.entries(values).map(([key, value]) => [key, resolveEnvRefs(value, scopes)]))
+}
+
+// resolveRequestURL mirrors the backend's scenario.ResolveURL — lets an
+// interface be authored as just "/oauth/token" and pick up the selected
+// environment's BASE_URL automatically instead of every interface having to
+// spell out {{.env.BASE_URL}}. Only a preview convenience: the actual send
+// goes through the backend, which applies the same rule server-side.
+function resolveRequestURL(url: string, baseURL: string) {
+  if (url.startsWith('http://') || url.startsWith('https://') || baseURL === '') {
+    return url
+  }
+  return `${baseURL.replace(/\/+$/, '')}/${url.replace(/^\/+/, '')}`
 }
