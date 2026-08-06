@@ -1,4 +1,8 @@
+import { ClipboardPaste, Wand2 } from 'lucide-react'
+import { useState } from 'react'
+
 import type { ScenarioStep } from '../api/client'
+import { parseHeaderText } from '../utils/headers'
 import KeyValueEditor from './KeyValueEditor'
 
 const METHODS: ScenarioStep['method'][] = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
@@ -9,8 +13,28 @@ type StepFieldsProps = {
 }
 
 export default function StepFields({ step, onChange }: StepFieldsProps) {
+  const [headerImportOpen, setHeaderImportOpen] = useState(false)
+  const [headerImportText, setHeaderImportText] = useState('')
+  const [bodyFormatError, setBodyFormatError] = useState('')
+
   function updateStep(patch: Partial<ScenarioStep>) {
     onChange({ ...step, ...patch })
+  }
+
+  function formatBodyJSON() {
+    setBodyFormatError('')
+    try {
+      updateStep({ body_tpl: JSON.stringify(JSON.parse(step.body_tpl), null, 2) })
+    } catch {
+      setBodyFormatError('不是合法 JSON')
+    }
+  }
+
+  function importHeaders() {
+    const parsed = parseHeaderText(headerImportText)
+    updateStep({ headers: { ...step.headers, ...parsed } })
+    setHeaderImportText('')
+    setHeaderImportOpen(false)
   }
 
   return (
@@ -40,18 +64,63 @@ export default function StepFields({ step, onChange }: StepFieldsProps) {
         </label>
       </div>
 
-      <label className="space-y-1">
-        <span className="field-label">请求体模板</span>
+      <div className="space-y-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="field-label">请求体模板</span>
+          <button className="btn btn-secondary h-8 px-2" type="button" onClick={formatBodyJSON}>
+            <Wand2 size={14} />
+            格式化 JSON
+          </button>
+          {bodyFormatError ? <span className="text-sm text-red-700">{bodyFormatError}</span> : null}
+        </div>
         <textarea
           className="textarea"
           value={step.body_tpl}
-          onChange={(event) => updateStep({ body_tpl: event.target.value })}
+          onChange={(event) => {
+            setBodyFormatError('')
+            updateStep({ body_tpl: event.target.value })
+          }}
         />
-      </label>
+      </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="space-y-2">
-          <div className="field-label">请求头</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="field-label">请求头</div>
+            <button
+              className="btn btn-secondary h-8 px-2"
+              type="button"
+              onClick={() => setHeaderImportOpen((value) => !value)}
+            >
+              <ClipboardPaste size={14} />
+              粘贴导入
+            </button>
+          </div>
+          {headerImportOpen ? (
+            <div className="space-y-2 rounded-md bg-white/50 p-3 ring-1 ring-white/60">
+              <textarea
+                className="textarea"
+                placeholder={'Content-Type: application/json\nAuthorization: Bearer xxx\n-H "X-Custom: 1"'}
+                value={headerImportText}
+                onChange={(event) => setHeaderImportText(event.target.value)}
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <button className="btn btn-primary" type="button" onClick={importHeaders}>
+                  确认导入
+                </button>
+                <button
+                  className="btn btn-secondary"
+                  type="button"
+                  onClick={() => {
+                    setHeaderImportText('')
+                    setHeaderImportOpen(false)
+                  }}
+                >
+                  取消
+                </button>
+              </div>
+            </div>
+          ) : null}
           <KeyValueEditor
             keyPlaceholder="请求头名"
             value={step.headers}

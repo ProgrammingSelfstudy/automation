@@ -58,6 +58,28 @@ func (h *handler) listInterfaces(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, responses)
 }
 
+func (h *handler) updateInterface(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxCreateInterfaceBodyBytes)
+
+	var req createInterfaceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeBadRequest(w, "invalid json")
+		return
+	}
+
+	iface := interfacestore.Interface{
+		ID:   r.PathValue("id"),
+		Name: req.Name,
+		Step: req.Step,
+	}
+	if err := h.deps.InterfaceStore.Update(r.Context(), &iface); err != nil {
+		writeError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, newInterfaceResponse(iface))
+}
+
 func newInterfaceResponse(iface interfacestore.Interface) interfaceResponse {
 	return interfaceResponse{
 		ID:        iface.ID,

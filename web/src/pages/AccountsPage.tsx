@@ -3,6 +3,7 @@ import { CheckCircle2, Plus, Search, XCircle } from 'lucide-react'
 import { type FormEvent, useState } from 'react'
 
 import { createAccount, listAccounts } from '../api/client'
+import SlideOver from '../components/SlideOver'
 import { formatDateTime, getErrorMessage } from '../utils/format'
 
 type AccountForm = {
@@ -26,6 +27,7 @@ export default function AccountsPage() {
   const [groupInput, setGroupInput] = useState('')
   const [activeGroup, setActiveGroup] = useState('')
   const [form, setForm] = useState<AccountForm>(initialForm)
+  const [createOpen, setCreateOpen] = useState(false)
   const [formError, setFormError] = useState('')
 
   const accountsQuery = useQuery({
@@ -43,6 +45,7 @@ export default function AccountsPage() {
         group_id: activeGroup || groupInput.trim(),
       })
       setFormError('')
+      setCreateOpen(false)
     },
     onError: (error) => setFormError(getErrorMessage(error)),
   })
@@ -80,6 +83,15 @@ export default function AccountsPage() {
     })
   }
 
+  function openCreateAccount() {
+    const groupID = activeGroup || groupInput.trim()
+    setForm((current) => ({
+      ...current,
+      group_id: groupID || current.group_id,
+    }))
+    setCreateOpen(true)
+  }
+
   const accounts = accountsQuery.data ?? []
 
   return (
@@ -100,6 +112,10 @@ export default function AccountsPage() {
             <button className="btn btn-primary" disabled={groupInput.trim() === ''} type="submit">
               <Search size={16} />
               查询
+            </button>
+            <button className="btn btn-primary" type="button" onClick={openCreateAccount}>
+              <Plus size={16} />
+              新建账号
             </button>
           </div>
         </form>
@@ -155,60 +171,59 @@ export default function AccountsPage() {
         )}
       </section>
 
-      <form className="panel" onSubmit={submitAccount}>
-        <div className="toolbar">
-          <h2 className="text-base font-semibold text-slate-950">新建账号</h2>
-          <button className="btn btn-primary" disabled={createMutation.isPending} type="submit">
+      <SlideOver open={createOpen} title="新建账号" onClose={() => setCreateOpen(false)}>
+        <form className="space-y-5" onSubmit={submitAccount}>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <label className="space-y-1">
+              <span className="field-label">账号组 ID</span>
+              <input
+                className="input"
+                value={form.group_id}
+                onChange={(event) => setForm({ ...form, group_id: event.target.value })}
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="field-label">用户名</span>
+              <input
+                className="input"
+                value={form.username}
+                onChange={(event) => setForm({ ...form, username: event.target.value })}
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="field-label">密码</span>
+              <input
+                className="input"
+                type="password"
+                value={form.password}
+                onChange={(event) => setForm({ ...form, password: event.target.value })}
+              />
+            </label>
+            <label className="flex h-10 items-center gap-3 self-end text-sm font-medium text-slate-700">
+              <input
+                checked={form.enabled}
+                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-200"
+                type="checkbox"
+                onChange={(event) => setForm({ ...form, enabled: event.target.checked })}
+              />
+              {form.enabled ? '启用账号' : '停用账号'}
+            </label>
+            <label className="space-y-1 lg:col-span-2">
+              <span className="field-label">扩展 JSON</span>
+              <textarea
+                className="textarea"
+                value={form.extra}
+                onChange={(event) => setForm({ ...form, extra: event.target.value })}
+              />
+            </label>
+          </div>
+          {formError ? <div className="rounded-md bg-red-50 px-4 py-3 text-sm text-red-700">{formError}</div> : null}
+          <button className="btn btn-primary w-full" disabled={createMutation.isPending} type="submit">
             <Plus size={16} />
             提交
           </button>
-        </div>
-        <div className="grid gap-4 p-4 sm:p-5 lg:grid-cols-2">
-          <label className="space-y-1">
-            <span className="field-label">账号组 ID</span>
-            <input
-              className="input"
-              value={form.group_id}
-              onChange={(event) => setForm({ ...form, group_id: event.target.value })}
-            />
-          </label>
-          <label className="space-y-1">
-            <span className="field-label">用户名</span>
-            <input
-              className="input"
-              value={form.username}
-              onChange={(event) => setForm({ ...form, username: event.target.value })}
-            />
-          </label>
-          <label className="space-y-1">
-            <span className="field-label">密码</span>
-            <input
-              className="input"
-              type="password"
-              value={form.password}
-              onChange={(event) => setForm({ ...form, password: event.target.value })}
-            />
-          </label>
-          <label className="flex h-10 items-center gap-3 self-end text-sm font-medium text-slate-700">
-            <input
-              checked={form.enabled}
-              className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-200"
-              type="checkbox"
-              onChange={(event) => setForm({ ...form, enabled: event.target.checked })}
-            />
-            {form.enabled ? '启用账号' : '停用账号'}
-          </label>
-          <label className="space-y-1 lg:col-span-2">
-            <span className="field-label">扩展 JSON</span>
-            <textarea
-              className="textarea"
-              value={form.extra}
-              onChange={(event) => setForm({ ...form, extra: event.target.value })}
-            />
-          </label>
-          {formError ? <div className="text-sm text-red-700 lg:col-span-2">{formError}</div> : null}
-        </div>
-      </form>
+        </form>
+      </SlideOver>
     </div>
   )
 }

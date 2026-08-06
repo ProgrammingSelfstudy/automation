@@ -15,11 +15,13 @@ import (
 	"interface-load-test/internal/accountstore"
 	"interface-load-test/internal/auth"
 	"interface-load-test/internal/authstore"
+	"interface-load-test/internal/environmentstore"
 	"interface-load-test/internal/httpapi"
 	"interface-load-test/internal/interfacestore"
 	"interface-load-test/internal/loadtest"
 	"interface-load-test/internal/logevent"
 	"interface-load-test/internal/resultstore"
+	"interface-load-test/internal/scenario"
 	"interface-load-test/internal/scenariostore"
 	"interface-load-test/internal/task"
 	"interface-load-test/internal/taskmanager"
@@ -57,12 +59,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("create interface store: %v", err)
 	}
+	environmentStore, err := environmentstore.NewMySQLStore(dsn)
+	if err != nil {
+		log.Fatalf("create environment store: %v", err)
+	}
 	authStore, err := authstore.NewMySQLStore(dsn)
 	if err != nil {
 		log.Fatalf("create auth store: %v", err)
 	}
 	authService := auth.NewService(authStore)
 	bootstrapAdmin(context.Background(), authStore, authService)
+	httpDoer := scenario.NewHTTPClient(0)
 
 	hub := logevent.NewHub()
 	registry := task.NewModuleRegistry()
@@ -70,15 +77,17 @@ func main() {
 	manager := taskmanager.NewManager(taskStore, registry)
 
 	router := httpapi.NewRouter(httpapi.Dependencies{
-		TaskManager:    manager,
-		AccountStore:   accountStore,
-		ResultStore:    resultStore,
-		InterfaceStore: interfaceStore,
-		ScenarioStore:  scenarioStore,
-		AuthService:    authService,
-		Hub:            hub,
-		AllowedOrigins: csvEnvOrDefault("ALLOWED_ORIGINS", "http://localhost:5173"),
-		CookieSecure:   boolEnv("COOKIE_SECURE", false),
+		TaskManager:      manager,
+		AccountStore:     accountStore,
+		ResultStore:      resultStore,
+		InterfaceStore:   interfaceStore,
+		EnvironmentStore: environmentStore,
+		ScenarioStore:    scenarioStore,
+		HTTPDoer:         httpDoer,
+		AuthService:      authService,
+		Hub:              hub,
+		AllowedOrigins:   csvEnvOrDefault("ALLOWED_ORIGINS", "http://localhost:5173"),
+		CookieSecure:     boolEnv("COOKIE_SECURE", false),
 	})
 
 	addr := envOrDefault("LISTEN_ADDR", ":8080")
@@ -148,7 +157,7 @@ func bootstrapAdmin(ctx context.Context, store authstore.Store, service *auth.Se
 	if _, err := service.CreateUser(ctx, username, password); err != nil {
 		log.Fatalf("bootstrap admin user: %v", err)
 	}
-	log.Printf("bootstrap admin user %q created; log in and set up 2FA", username)
+	log.Printf("bootstrap admin user %q created without TOTP; configure 2FA before browser login", username)
 }
 
 func mustEnv(name string) string {

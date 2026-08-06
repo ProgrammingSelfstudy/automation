@@ -1,9 +1,23 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity, BookOpen, ChevronDown, FileCode2, KeyRound, ListChecks, LogOut, RefreshCw, Users, X } from 'lucide-react'
+import {
+  Activity,
+  BookOpen,
+  ChevronDown,
+  ChevronRight,
+  FileCode2,
+  Globe2,
+  KeyRound,
+  ListChecks,
+  LogOut,
+  RefreshCw,
+  Users,
+  X,
+} from 'lucide-react'
 import { type FormEvent, useState } from 'react'
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 
 import { logout, me, regenerateBackupCodes } from './api/client'
+import EnvironmentModal from './components/EnvironmentModal'
 import AccountsPage from './pages/AccountsPage'
 import CreateTaskPage from './pages/CreateTaskPage'
 import InterfacesPage from './pages/InterfacesPage'
@@ -32,6 +46,8 @@ export default function App() {
   const [backupPassword, setBackupPassword] = useState('')
   const [newBackupCodes, setNewBackupCodes] = useState<string[]>([])
   const [backupError, setBackupError] = useState('')
+  const [moduleExpanded, setModuleExpanded] = useState(true)
+  const [environmentModalOpen, setEnvironmentModalOpen] = useState(false)
 
   const meQuery = useQuery({
     queryKey: ['auth', 'me'],
@@ -78,7 +94,7 @@ export default function App() {
 
   if (meQuery.isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4 text-sm text-slate-600">
+      <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4 text-sm text-slate-300">
         加载中
       </div>
     )
@@ -98,7 +114,7 @@ export default function App() {
       <div className="app-backdrop" aria-hidden="true" />
 
       <header className="sticky top-0 z-30 border-b border-white/50 bg-white/65 backdrop-blur-xl">
-        <div className="mx-auto flex w-full max-w-7xl flex-col gap-3 px-4 py-3 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
+        <div className="flex w-full flex-col gap-3 px-4 py-3 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-[#1677ff] via-[#1aa8ff] to-[#22d7c7] text-white shadow-lg shadow-blue-500/20">
               <Activity size={20} />
@@ -122,6 +138,10 @@ export default function App() {
               <Users size={16} />
               账号
             </NavLink>
+            <button className="btn btn-secondary" type="button" onClick={() => setEnvironmentModalOpen(true)}>
+              <Globe2 size={16} />
+              环境
+            </button>
             <div className="inline-flex h-10 items-center rounded-md border border-white/60 bg-white/55 px-3 text-sm font-medium text-slate-700 backdrop-blur-xl">
               {currentUser.username}
             </div>
@@ -142,19 +162,26 @@ export default function App() {
         </div>
       </header>
 
-      <div className="mx-auto grid w-full max-w-7xl gap-5 px-4 py-5 sm:px-6 lg:grid-cols-[260px_minmax(0,1fr)] lg:px-8">
+      <div className="grid w-full gap-5 px-4 py-5 sm:px-6 lg:grid-cols-[260px_minmax(0,1fr)] lg:px-8">
         <aside className="glass-panel h-fit p-3 lg:sticky lg:top-20">
           <div className="mb-2 flex items-center justify-between px-2 py-2">
             <div>
               <div className="text-xs font-semibold text-slate-500">模块</div>
               <div className="mt-1 text-base font-semibold text-slate-950">接口测试</div>
             </div>
-            <div className="flex h-8 w-8 items-center justify-center rounded-full border border-cyan-200/70 bg-cyan-50/80 text-cyan-600">
-              <ChevronDown size={16} />
-            </div>
+            <button
+              aria-expanded={moduleExpanded}
+              aria-label={moduleExpanded ? '收起接口测试模块' : '展开接口测试模块'}
+              className="flex h-8 w-8 items-center justify-center rounded-full border border-cyan-200/70 bg-cyan-50/80 text-cyan-600"
+              type="button"
+              onClick={() => setModuleExpanded((value) => !value)}
+            >
+              {moduleExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            </button>
           </div>
 
-          <nav className="space-y-2">
+          {moduleExpanded ? (
+            <nav className="space-y-2">
               {navItems.map((item) => {
                 const Icon = item.icon
                 return (
@@ -177,19 +204,20 @@ export default function App() {
                 )
               })}
             </nav>
+          ) : null}
         </aside>
 
         <main className="min-w-0">
-        <Routes>
-          <Route element={<Navigate replace to="/interfaces" />} path="/" />
-          <Route element={<AccountsPage />} path="/accounts" />
-          <Route element={<InterfacesPage />} path="/interfaces" />
-          <Route element={<ScenariosPage />} path="/scenarios" />
-          <Route element={<TaskListPage />} path="/runs" />
-          <Route element={<CreateTaskPage />} path="/tasks/new" />
-          <Route element={<TaskDetailPage />} path="/tasks/:id" />
-          <Route element={<Navigate replace to="/interfaces" />} path="*" />
-        </Routes>
+          <Routes>
+            <Route element={<Navigate replace to="/interfaces" />} path="/" />
+            <Route element={<AccountsPage />} path="/accounts" />
+            <Route element={<InterfacesPage />} path="/interfaces" />
+            <Route element={<ScenariosPage />} path="/scenarios" />
+            <Route element={<TaskListPage />} path="/runs" />
+            <Route element={<CreateTaskPage />} path="/tasks/new" />
+            <Route element={<TaskDetailPage />} path="/tasks/:id" />
+            <Route element={<Navigate replace to="/interfaces" />} path="*" />
+          </Routes>
         </main>
       </div>
 
@@ -242,6 +270,8 @@ export default function App() {
           </section>
         </div>
       ) : null}
+
+      <EnvironmentModal open={environmentModalOpen} onClose={() => setEnvironmentModalOpen(false)} />
     </div>
   )
 }

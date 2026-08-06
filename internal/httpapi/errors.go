@@ -9,6 +9,7 @@ import (
 	"interface-load-test/internal/accountstore"
 	"interface-load-test/internal/auth"
 	"interface-load-test/internal/authstore"
+	"interface-load-test/internal/environmentstore"
 	"interface-load-test/internal/export"
 	"interface-load-test/internal/interfacestore"
 	"interface-load-test/internal/loadtest"
@@ -22,6 +23,8 @@ func classifyError(err error) (status int, message string) {
 	switch {
 	case errors.Is(err, taskmanager.ErrNotFound),
 		errors.Is(err, accountstore.ErrNotFound),
+		errors.Is(err, environmentstore.ErrNotFound),
+		errors.Is(err, interfacestore.ErrNotFound),
 		errors.Is(err, scenariostore.ErrNotFound),
 		errors.Is(err, export.ErrNoResults):
 		return http.StatusNotFound, err.Error()
@@ -43,6 +46,7 @@ func classifyError(err error) (status int, message string) {
 		errors.Is(err, accountstore.ErrGroupIDTooLong),
 		errors.Is(err, accountstore.ErrUsernameRequired),
 		errors.Is(err, accountstore.ErrPasswordRequired),
+		errors.Is(err, environmentstore.ErrNameRequired),
 		errors.Is(err, interfacestore.ErrNameRequired),
 		errors.Is(err, interfacestore.ErrMethodRequired),
 		errors.Is(err, interfacestore.ErrURLRequired),

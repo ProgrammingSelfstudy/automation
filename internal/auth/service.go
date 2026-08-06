@@ -21,7 +21,7 @@ const (
 	minPasswordLength      = 8
 	maxFailedLoginAttempts = 5
 	loginLockoutWindow     = 15 * time.Minute
-	totpIssuer             = "接口压测控制台"
+	TOTPIssuer             = "接口压测控制台"
 	sessionTokenBytes      = 32
 	backupCodeBytes        = 10
 )
@@ -76,7 +76,7 @@ func (s *Service) SetupTOTP(ctx context.Context, username, password string) (sec
 	}
 
 	key, err := totp.Generate(totp.GenerateOpts{
-		Issuer:      totpIssuer,
+		Issuer:      TOTPIssuer,
 		AccountName: user.Username,
 	})
 	if err != nil {
@@ -101,7 +101,7 @@ func (s *Service) ConfirmTOTP(ctx context.Context, username, password, code stri
 		return nil, nil, nil, ErrInvalidCode
 	}
 
-	plainCodes, hashes, err := generateBackupCodes()
+	plainCodes, hashes, err := GenerateBackupCodes()
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -178,7 +178,7 @@ func (s *Service) RegenerateBackupCodes(ctx context.Context, userID, password st
 		return nil, ErrInvalidCredentials
 	}
 
-	plainCodes, hashes, err := generateBackupCodes()
+	plainCodes, hashes, err := GenerateBackupCodes()
 	if err != nil {
 		return nil, err
 	}
@@ -273,9 +273,10 @@ func mustGenerateDummyPasswordHash() []byte {
 	return hash
 }
 
-func generateBackupCodes() ([]string, []string, error) {
-	plainCodes := make([]string, 0, backupCodeCount)
-	hashes := make([]string, 0, backupCodeCount)
+// GenerateBackupCodes returns one-time recovery codes and bcrypt hashes for storage.
+func GenerateBackupCodes() (plainCodes []string, hashes []string, err error) {
+	plainCodes = make([]string, 0, backupCodeCount)
+	hashes = make([]string, 0, backupCodeCount)
 	for i := 0; i < backupCodeCount; i++ {
 		code, err := randomBackupCode()
 		if err != nil {

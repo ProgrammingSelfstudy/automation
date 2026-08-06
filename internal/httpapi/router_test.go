@@ -22,6 +22,7 @@ import (
 	"interface-load-test/internal/accountstore"
 	"interface-load-test/internal/auth"
 	"interface-load-test/internal/authstore"
+	"interface-load-test/internal/environmentstore"
 	"interface-load-test/internal/export"
 	"interface-load-test/internal/interfacestore"
 	"interface-load-test/internal/loadtest"
@@ -190,6 +191,294 @@ func TestListInterfaces(t *testing.T) {
 	router.ServeHTTP(empty, authenticatedRequest(http.MethodGet, "/api/interfaces", nil))
 	if empty.Code != http.StatusOK || strings.TrimSpace(empty.Body.String()) != "[]" {
 		t.Fatalf("empty interfaces = status %d body %q, want 200 []", empty.Code, empty.Body.String())
+	}
+}
+
+func TestUpdateInterface(t *testing.T) {
+	deps := newHTTPTestDeps()
+	deps.interfaces.updateFunc = func(ctx context.Context, iface *interfacestore.Interface) error {
+		if iface.ID != "interface-1" {
+			t.Fatalf("interface id = %q, want interface-1", iface.ID)
+		}
+		if iface.Name != "login api updated" {
+			t.Fatalf("interface name = %q, want login api updated", iface.Name)
+		}
+		if iface.Step.Method != "PUT" || iface.Step.URL != "https://api.test/login-v2" {
+			t.Fatalf("interface step = %#v", iface.Step)
+		}
+		iface.CreatedAt = testHTTPTime()
+		return nil
+	}
+	router := NewRouter(deps.Dependencies())
+
+	body := `{"name":"login api updated","step":{"name":"login","method":"PUT","url":"https://api.test/login-v2","body_tpl":"{}","headers":{"Content-Type":"application/json"},"extract":{"token":"data.token"}}}`
+	resp := serveJSON(t, router, http.MethodPut, "/api/interfaces/interface-1", body)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusOK, resp.Body.String())
+	}
+	got := decodeObject(t, resp.Body)
+	if got["id"] != "interface-1" || got["name"] != "login api updated" {
+		t.Fatalf("response identity = %#v", got)
+	}
+	step, ok := got["step"].(map[string]any)
+	if !ok {
+		t.Fatalf("step = %#v, want object", got["step"])
+	}
+	if step["method"] != "PUT" || step["url"] != "https://api.test/login-v2" {
+		t.Fatalf("step response = %#v", step)
+	}
+}
+
+func TestUpdateInterfaceNotFound(t *testing.T) {
+	deps := newHTTPTestDeps()
+	deps.interfaces.updateFunc = func(context.Context, *interfacestore.Interface) error {
+		return interfacestore.ErrNotFound
+	}
+	router := NewRouter(deps.Dependencies())
+
+	body := `{"name":"login api","step":{"method":"POST","url":"https://api.test/login"}}`
+	resp := serveJSON(t, router, http.MethodPut, "/api/interfaces/missing", body)
+
+	assertErrorResponse(t, resp, http.StatusNotFound, interfacestore.ErrNotFound.Error())
+}
+
+func TestCreateEnvironment(t *testing.T) {
+	deps := newHTTPTestDeps()
+	deps.environments.createFunc = func(ctx context.Context, env *environmentstore.Environment) error {
+		if env.Name != "dev" {
+			t.Fatalf("environment name = %q, want dev", env.Name)
+		}
+		if env.Variables["BASE_URL"] != "https://dev.example.test" {
+			t.Fatalf("environment variables = %#v", env.Variables)
+		}
+		if env.DefaultHeaders["X-Env"] != "{{.env.BASE_URL}}" {
+			t.Fatalf("environment default headers = %#v", env.DefaultHeaders)
+		}
+		env.ID = "env-1"
+		env.CreatedAt = testHTTPTime()
+		return nil
+	}
+	router := NewRouter(deps.Dependencies())
+
+	body := `{"name":"dev","variables":{"BASE_URL":"https://dev.example.test"},"default_headers":{"X-Env":"{{.env.BASE_URL}}"}}`
+	resp := serveJSON(t, router, http.MethodPost, "/api/environments", body)
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusCreated, resp.Body.String())
+	}
+	got := decodeObject(t, resp.Body)
+	if got["id"] != "env-1" || got["name"] != "dev" {
+		t.Fatalf("response identity = %#v", got)
+	}
+	variables, ok := got["variables"].(map[string]any)
+	if !ok {
+		t.Fatalf("variables = %#v, want object", got["variables"])
+	}
+	if variables["BASE_URL"] != "https://dev.example.test" {
+		t.Fatalf("variables response = %#v", variables)
+	}
+	defaultHeaders, ok := got["default_headers"].(map[string]any)
+	if !ok {
+		t.Fatalf("default_headers = %#v, want object", got["default_headers"])
+	}
+	if defaultHeaders["X-Env"] != "{{.env.BASE_URL}}" {
+		t.Fatalf("default_headers response = %#v", defaultHeaders)
+	}
+}
+
+func TestCreateEnvironmentValidationError(t *testing.T) {
+	deps := newHTTPTestDeps()
+	deps.environments.createFunc = func(context.Context, *environmentstore.Environment) error {
+		return environmentstore.ErrNameRequired
+	}
+	router := NewRouter(deps.Dependencies())
+
+	resp := serveJSON(t, router, http.MethodPost, "/api/environments", `{"variables":{"BASE_URL":"https://dev.example.test"}}`)
+
+	assertErrorResponse(t, resp, http.StatusBadRequest, environmentstore.ErrNameRequired.Error())
+}
+
+func TestListEnvironments(t *testing.T) {
+	deps := newHTTPTestDeps()
+	deps.environments.items = []environmentstore.Environment{
+		{
+			ID:             "env-1",
+			Name:           "dev",
+			Variables:      map[string]string{"BASE_URL": "https://dev.example.test"},
+			DefaultHeaders: map[string]string{"X-Env": "{{.env.BASE_URL}}"},
+			CreatedAt:      testHTTPTime(),
+		},
+	}
+	router := NewRouter(deps.Dependencies())
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, authenticatedRequest(http.MethodGet, "/api/environments", nil))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusOK, resp.Body.String())
+	}
+	var body []struct {
+		ID             string            `json:"id"`
+		Name           string            `json:"name"`
+		Variables      map[string]string `json:"variables"`
+		DefaultHeaders map[string]string `json:"default_headers"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if len(body) != 1 {
+		t.Fatalf("len(body) = %d, want 1", len(body))
+	}
+	if body[0].ID != "env-1" || body[0].Variables["BASE_URL"] != "https://dev.example.test" {
+		t.Fatalf("environment response = %#v", body[0])
+	}
+	if body[0].DefaultHeaders["X-Env"] != "{{.env.BASE_URL}}" {
+		t.Fatalf("environment default headers = %#v", body[0])
+	}
+
+	deps.environments.items = nil
+	empty := httptest.NewRecorder()
+	router.ServeHTTP(empty, authenticatedRequest(http.MethodGet, "/api/environments", nil))
+	if empty.Code != http.StatusOK || strings.TrimSpace(empty.Body.String()) != "[]" {
+		t.Fatalf("empty environments = status %d body %q, want 200 []", empty.Code, empty.Body.String())
+	}
+}
+
+func TestUpdateEnvironment(t *testing.T) {
+	deps := newHTTPTestDeps()
+	deps.environments.updateFunc = func(ctx context.Context, env *environmentstore.Environment) error {
+		if env.ID != "env-1" {
+			t.Fatalf("environment id = %q, want env-1", env.ID)
+		}
+		if env.Name != "dev updated" {
+			t.Fatalf("environment name = %q, want dev updated", env.Name)
+		}
+		if env.Variables["BASE_URL"] != "https://dev2.example.test" {
+			t.Fatalf("environment variables = %#v", env.Variables)
+		}
+		if env.DefaultHeaders["X-Env"] != "dev2" {
+			t.Fatalf("environment default headers = %#v", env.DefaultHeaders)
+		}
+		env.CreatedAt = testHTTPTime()
+		return nil
+	}
+	router := NewRouter(deps.Dependencies())
+
+	body := `{"name":"dev updated","variables":{"BASE_URL":"https://dev2.example.test"},"default_headers":{"X-Env":"dev2"}}`
+	resp := serveJSON(t, router, http.MethodPut, "/api/environments/env-1", body)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusOK, resp.Body.String())
+	}
+	got := decodeObject(t, resp.Body)
+	if got["id"] != "env-1" || got["name"] != "dev updated" {
+		t.Fatalf("response identity = %#v", got)
+	}
+}
+
+func TestUpdateEnvironmentNotFound(t *testing.T) {
+	deps := newHTTPTestDeps()
+	deps.environments.updateFunc = func(context.Context, *environmentstore.Environment) error {
+		return environmentstore.ErrNotFound
+	}
+	router := NewRouter(deps.Dependencies())
+
+	body := `{"name":"dev","variables":{"BASE_URL":"https://dev.example.test"}}`
+	resp := serveJSON(t, router, http.MethodPut, "/api/environments/missing", body)
+
+	assertErrorResponse(t, resp, http.StatusNotFound, environmentstore.ErrNotFound.Error())
+}
+
+func TestTrySendInterfaceRendersWithEnvironmentAndMergedHeaders(t *testing.T) {
+	deps := newHTTPTestDeps()
+	deps.environments.items = []environmentstore.Environment{
+		{
+			ID:        "env-1",
+			Name:      "dev",
+			Variables: map[string]string{"BASE_URL": "https://dev.example.test", "TOKEN": "secret"},
+			DefaultHeaders: map[string]string{
+				"Authorization": "Bearer {{.env.TOKEN}}",
+				"X-Source":      "environment",
+			},
+		},
+	}
+	deps.httpDoer.responses = []fakeHTTPResponse{{statusCode: http.StatusAccepted, body: `{"ok":true}`}}
+	router := NewRouter(deps.Dependencies())
+
+	body := `{"environment_id":"env-1","step":{"name":"preview","method":"POST","url":"{{.env.BASE_URL}}/users","body_tpl":"{\"token\":\"{{.env.TOKEN}}\"}","headers":{"X-Source":"step","X-Step":"{{.env.TOKEN}}"}}}`
+	resp := serveJSON(t, router, http.MethodPost, "/api/interfaces/try-send", body)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusOK, resp.Body.String())
+	}
+
+	var got trySendInterfaceResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if got.Error != "" {
+		t.Fatalf("error = %q, want empty", got.Error)
+	}
+	if got.Request.URL != "https://dev.example.test/users" || got.Request.Body != `{"token":"secret"}` {
+		t.Fatalf("request = %#v", got.Request)
+	}
+	if got.Request.Headers["Authorization"] != "Bearer secret" || got.Request.Headers["X-Source"] != "step" || got.Request.Headers["X-Step"] != "secret" {
+		t.Fatalf("request headers = %#v", got.Request.Headers)
+	}
+	if got.Response.StatusCode != http.StatusAccepted || got.Response.Body != `{"ok":true}` || got.Response.Truncated {
+		t.Fatalf("response = %#v", got.Response)
+	}
+
+	calls := deps.httpDoer.Calls()
+	if len(calls) != 1 {
+		t.Fatalf("HTTP call count = %d, want 1", len(calls))
+	}
+	if calls[0].url != got.Request.URL || calls[0].headers["Authorization"] != "Bearer secret" {
+		t.Fatalf("HTTP call = %#v", calls[0])
+	}
+}
+
+func TestTrySendInterfaceReturnsRenderErrorWithoutHTTPCall(t *testing.T) {
+	deps := newHTTPTestDeps()
+	router := NewRouter(deps.Dependencies())
+
+	body := `{"step":{"name":"preview","method":"GET","url":"https://api.test/{{.account.Username}}"}}`
+	resp := serveJSON(t, router, http.MethodPost, "/api/interfaces/try-send", body)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusOK, resp.Body.String())
+	}
+
+	var got trySendInterfaceResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if got.Error == "" || !strings.Contains(got.Error, "render url") {
+		t.Fatalf("error = %q, want render url error", got.Error)
+	}
+	if got.Request.URL != "" || got.Response.StatusCode != 0 {
+		t.Fatalf("try-send response = %#v", got)
+	}
+	if calls := deps.httpDoer.Calls(); len(calls) != 0 {
+		t.Fatalf("HTTP call count = %d, want 0", len(calls))
+	}
+}
+
+func TestTrySendInterfaceTruncatesLargeResponse(t *testing.T) {
+	deps := newHTTPTestDeps()
+	deps.httpDoer.responses = []fakeHTTPResponse{{statusCode: http.StatusOK, body: strings.Repeat("a", trySendMaxResponseBytes+1)}}
+	router := NewRouter(deps.Dependencies())
+
+	body := `{"step":{"name":"preview","method":"GET","url":"https://api.test/ping"}}`
+	resp := serveJSON(t, router, http.MethodPost, "/api/interfaces/try-send", body)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusOK, resp.Body.String())
+	}
+
+	var got trySendInterfaceResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if !got.Response.Truncated {
+		t.Fatalf("truncated = false, want true")
+	}
+	if len(got.Response.Body) != trySendMaxResponseBytes {
+		t.Fatalf("response body len = %d, want %d", len(got.Response.Body), trySendMaxResponseBytes)
 	}
 }
 
@@ -950,7 +1239,9 @@ type httpTestDeps struct {
 	accounts       *fakeHTTPAccountStore
 	results        *fakeHTTPResultStore
 	interfaces     *fakeHTTPInterfaceStore
+	environments   *fakeHTTPEnvironmentStore
 	scenarios      *fakeHTTPScenarioStore
+	httpDoer       *fakeHTTPDoer
 	authStore      *fakeHTTPAuthStore
 	hub            *logevent.Hub
 	allowedOrigins []string
@@ -971,26 +1262,30 @@ func newHTTPTestDeps() *httpTestDeps {
 		ExpiresAt: time.Now().Add(time.Hour),
 	}
 	return &httpTestDeps{
-		tasks:      &fakeHTTPTaskManager{},
-		accounts:   &fakeHTTPAccountStore{},
-		results:    &fakeHTTPResultStore{},
-		interfaces: &fakeHTTPInterfaceStore{},
-		scenarios:  &fakeHTTPScenarioStore{},
-		authStore:  authStore,
-		hub:        logevent.NewHub(),
+		tasks:        &fakeHTTPTaskManager{},
+		accounts:     &fakeHTTPAccountStore{},
+		results:      &fakeHTTPResultStore{},
+		interfaces:   &fakeHTTPInterfaceStore{},
+		environments: &fakeHTTPEnvironmentStore{},
+		scenarios:    &fakeHTTPScenarioStore{},
+		httpDoer:     &fakeHTTPDoer{},
+		authStore:    authStore,
+		hub:          logevent.NewHub(),
 	}
 }
 
 func (d *httpTestDeps) Dependencies() Dependencies {
 	return Dependencies{
-		TaskManager:    d.tasks,
-		AccountStore:   d.accounts,
-		ResultStore:    d.results,
-		InterfaceStore: d.interfaces,
-		ScenarioStore:  d.scenarios,
-		AuthService:    auth.NewService(d.authStore),
-		Hub:            d.hub,
-		AllowedOrigins: d.allowedOrigins,
+		TaskManager:      d.tasks,
+		AccountStore:     d.accounts,
+		ResultStore:      d.results,
+		InterfaceStore:   d.interfaces,
+		EnvironmentStore: d.environments,
+		ScenarioStore:    d.scenarios,
+		HTTPDoer:         d.httpDoer,
+		AuthService:      auth.NewService(d.authStore),
+		Hub:              d.hub,
+		AllowedOrigins:   d.allowedOrigins,
 	}
 }
 
@@ -1215,10 +1510,76 @@ func (s *fakeHTTPResultStore) ListByTaskGroupedByAccount(context.Context, string
 	return s.groups, nil
 }
 
+type fakeHTTPResponse struct {
+	statusCode int
+	body       string
+	err        error
+}
+
+type fakeHTTPCall struct {
+	method  string
+	url     string
+	body    string
+	headers map[string]string
+}
+
+type fakeHTTPDoer struct {
+	mu        sync.Mutex
+	responses []fakeHTTPResponse
+	calls     []fakeHTTPCall
+}
+
+func (d *fakeHTTPDoer) Do(ctx context.Context, method, url string, body []byte, headers map[string]string) (int, []byte, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	copiedHeaders := make(map[string]string, len(headers))
+	for key, value := range headers {
+		copiedHeaders[key] = value
+	}
+	d.calls = append(d.calls, fakeHTTPCall{
+		method:  method,
+		url:     url,
+		body:    string(body),
+		headers: copiedHeaders,
+	})
+
+	if err := ctx.Err(); err != nil {
+		return 0, nil, err
+	}
+	index := len(d.calls) - 1
+	if index >= len(d.responses) {
+		return 0, nil, errors.New("unexpected HTTP call")
+	}
+	resp := d.responses[index]
+	return resp.statusCode, []byte(resp.body), resp.err
+}
+
+func (d *fakeHTTPDoer) Calls() []fakeHTTPCall {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	calls := make([]fakeHTTPCall, len(d.calls))
+	for i, call := range d.calls {
+		copiedHeaders := make(map[string]string, len(call.headers))
+		for key, value := range call.headers {
+			copiedHeaders[key] = value
+		}
+		calls[i] = fakeHTTPCall{
+			method:  call.method,
+			url:     call.url,
+			body:    call.body,
+			headers: copiedHeaders,
+		}
+	}
+	return calls
+}
+
 type fakeHTTPInterfaceStore struct {
 	items      []interfacestore.Interface
 	createFunc func(context.Context, *interfacestore.Interface) error
 	listFunc   func(context.Context) ([]interfacestore.Interface, error)
+	updateFunc func(context.Context, *interfacestore.Interface) error
 }
 
 func (s *fakeHTTPInterfaceStore) Create(ctx context.Context, iface *interfacestore.Interface) error {
@@ -1238,6 +1599,71 @@ func (s *fakeHTTPInterfaceStore) List(ctx context.Context) ([]interfacestore.Int
 		return []interfacestore.Interface{}, nil
 	}
 	return s.items, nil
+}
+
+func (s *fakeHTTPInterfaceStore) Update(ctx context.Context, iface *interfacestore.Interface) error {
+	if s.updateFunc != nil {
+		return s.updateFunc(ctx, iface)
+	}
+	return nil
+}
+
+type fakeHTTPEnvironmentStore struct {
+	items      []environmentstore.Environment
+	createFunc func(context.Context, *environmentstore.Environment) error
+	getFunc    func(context.Context, string) (*environmentstore.Environment, error)
+	listFunc   func(context.Context) ([]environmentstore.Environment, error)
+	updateFunc func(context.Context, *environmentstore.Environment) error
+}
+
+func (s *fakeHTTPEnvironmentStore) Create(ctx context.Context, env *environmentstore.Environment) error {
+	if s.createFunc != nil {
+		return s.createFunc(ctx, env)
+	}
+	env.ID = "env-1"
+	env.CreatedAt = testHTTPTime()
+	if env.Variables == nil {
+		env.Variables = map[string]string{}
+	}
+	if env.DefaultHeaders == nil {
+		env.DefaultHeaders = map[string]string{}
+	}
+	return nil
+}
+
+func (s *fakeHTTPEnvironmentStore) Get(ctx context.Context, id string) (*environmentstore.Environment, error) {
+	if s.getFunc != nil {
+		return s.getFunc(ctx, id)
+	}
+	for _, env := range s.items {
+		if env.ID == id {
+			return &env, nil
+		}
+	}
+	return nil, environmentstore.ErrNotFound
+}
+
+func (s *fakeHTTPEnvironmentStore) List(ctx context.Context) ([]environmentstore.Environment, error) {
+	if s.listFunc != nil {
+		return s.listFunc(ctx)
+	}
+	if s.items == nil {
+		return []environmentstore.Environment{}, nil
+	}
+	return s.items, nil
+}
+
+func (s *fakeHTTPEnvironmentStore) Update(ctx context.Context, env *environmentstore.Environment) error {
+	if s.updateFunc != nil {
+		return s.updateFunc(ctx, env)
+	}
+	if env.Variables == nil {
+		env.Variables = map[string]string{}
+	}
+	if env.DefaultHeaders == nil {
+		env.DefaultHeaders = map[string]string{}
+	}
+	return nil
 }
 
 type fakeHTTPScenarioStore struct {

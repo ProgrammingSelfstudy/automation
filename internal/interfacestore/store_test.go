@@ -145,6 +145,45 @@ func TestListReturnsEmptySliceForNoRows(t *testing.T) {
 	assertInterfaceExpectations(t, mock)
 }
 
+func TestUpdateStoresStep(t *testing.T) {
+	db, mock := newInterfaceMockDB(t)
+	store := NewSQLStore(db)
+	iface := &Interface{
+		ID:   "iface-1",
+		Name: "updated api",
+		Step: testStep(),
+	}
+
+	mock.ExpectExec(regexp.QuoteMeta(updateInterfaceSQL)).
+		WithArgs("updated api", interfaceStepArg{t: t, want: iface.Step}, "iface-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	if err := store.Update(context.Background(), iface); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	assertInterfaceExpectations(t, mock)
+}
+
+func TestUpdateReturnsNotFoundWhenNoRowsAffected(t *testing.T) {
+	db, mock := newInterfaceMockDB(t)
+	store := NewSQLStore(db)
+	iface := &Interface{
+		ID:   "missing",
+		Name: "updated api",
+		Step: testStep(),
+	}
+
+	mock.ExpectExec(regexp.QuoteMeta(updateInterfaceSQL)).
+		WithArgs("updated api", interfaceStepArg{t: t, want: iface.Step}, "missing").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	err := store.Update(context.Background(), iface)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Update() error = %v, want %v", err, ErrNotFound)
+	}
+	assertInterfaceExpectations(t, mock)
+}
+
 type anyInterfaceID struct{}
 
 func (anyInterfaceID) Match(value driver.Value) bool {

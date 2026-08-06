@@ -7,9 +7,11 @@ import (
 
 	"interface-load-test/internal/accountstore"
 	"interface-load-test/internal/auth"
+	"interface-load-test/internal/environmentstore"
 	"interface-load-test/internal/interfacestore"
 	"interface-load-test/internal/logevent"
 	"interface-load-test/internal/resultstore"
+	"interface-load-test/internal/scenario"
 	"interface-load-test/internal/scenariostore"
 	"interface-load-test/internal/task"
 	"interface-load-test/internal/taskmanager"
@@ -31,15 +33,17 @@ type ResultStore interface {
 
 // Dependencies contains HTTP handler dependencies.
 type Dependencies struct {
-	TaskManager    TaskManager
-	AccountStore   accountstore.Store
-	ResultStore    ResultStore
-	InterfaceStore interfacestore.Store
-	ScenarioStore  scenariostore.Store
-	AuthService    *auth.Service
-	Hub            *logevent.Hub
-	AllowedOrigins []string
-	CookieSecure   bool
+	TaskManager      TaskManager
+	AccountStore     accountstore.Store
+	ResultStore      ResultStore
+	InterfaceStore   interfacestore.Store
+	EnvironmentStore environmentstore.Store
+	ScenarioStore    scenariostore.Store
+	HTTPDoer         scenario.HTTPDoer
+	AuthService      *auth.Service
+	Hub              *logevent.Hub
+	AllowedOrigins   []string
+	CookieSecure     bool
 }
 
 type handler struct {
@@ -63,6 +67,11 @@ func NewRouter(deps Dependencies) http.Handler {
 	mux.HandleFunc("GET /api/accounts", requireAuth(deps.AuthService, h.listAccounts))
 	mux.HandleFunc("POST /api/interfaces", requireAuth(deps.AuthService, h.createInterface))
 	mux.HandleFunc("GET /api/interfaces", requireAuth(deps.AuthService, h.listInterfaces))
+	mux.HandleFunc("POST /api/interfaces/try-send", requireAuth(deps.AuthService, h.trySendInterface))
+	mux.HandleFunc("PUT /api/interfaces/{id}", requireAuth(deps.AuthService, h.updateInterface))
+	mux.HandleFunc("POST /api/environments", requireAuth(deps.AuthService, h.createEnvironment))
+	mux.HandleFunc("GET /api/environments", requireAuth(deps.AuthService, h.listEnvironments))
+	mux.HandleFunc("PUT /api/environments/{id}", requireAuth(deps.AuthService, h.updateEnvironment))
 	mux.HandleFunc("POST /api/scenarios", requireAuth(deps.AuthService, h.createScenario))
 	mux.HandleFunc("GET /api/scenarios", requireAuth(deps.AuthService, h.listScenarios))
 	mux.HandleFunc("POST /api/tasks", requireAuth(deps.AuthService, h.createTask))
