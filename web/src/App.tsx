@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Activity,
   BookOpen,
+  Braces,
   ChevronDown,
   ChevronRight,
   FileCode2,
@@ -18,6 +19,7 @@ import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'reac
 
 import { logout, me, regenerateBackupCodes } from './api/client'
 import EnvironmentModal from './components/EnvironmentModal'
+import GlobalVariablesModal from './components/GlobalVariablesModal'
 import AccountsPage from './pages/AccountsPage'
 import CreateTaskPage from './pages/CreateTaskPage'
 import InterfacesPage from './pages/InterfacesPage'
@@ -48,6 +50,7 @@ export default function App() {
   const [backupError, setBackupError] = useState('')
   const [moduleExpanded, setModuleExpanded] = useState(true)
   const [environmentModalOpen, setEnvironmentModalOpen] = useState(false)
+  const [globalVariablesModalOpen, setGlobalVariablesModalOpen] = useState(false)
 
   const meQuery = useQuery({
     queryKey: ['auth', 'me'],
@@ -141,6 +144,10 @@ export default function App() {
             <button className="btn btn-secondary" type="button" onClick={() => setEnvironmentModalOpen(true)}>
               <Globe2 size={16} />
               环境
+            </button>
+            <button className="btn btn-secondary" type="button" onClick={() => setGlobalVariablesModalOpen(true)}>
+              <Braces size={16} />
+              全局变量
             </button>
             <div className="inline-flex h-10 items-center rounded-md border border-white/60 bg-white/55 px-3 text-sm font-medium text-slate-700 backdrop-blur-xl">
               {currentUser.username}
@@ -272,6 +279,7 @@ export default function App() {
       ) : null}
 
       <EnvironmentModal open={environmentModalOpen} onClose={() => setEnvironmentModalOpen(false)} />
+      <GlobalVariablesModal open={globalVariablesModalOpen} onClose={() => setGlobalVariablesModalOpen(false)} />
     </div>
   )
 }

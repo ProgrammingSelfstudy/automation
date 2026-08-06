@@ -176,6 +176,23 @@ func MergeHeaders(envHeaders, stepHeaders map[string]string) map[string]string {
 	return merged
 }
 
+// ResolveURL prepends baseURL to url when url is a relative path, so an
+// interface can be authored as just "/oauth/token" and pick up the active
+// environment's BASE_URL automatically instead of every interface having to
+// spell out {{.env.BASE_URL}} itself. A url that's already absolute (starts
+// with http:// or https://, after template rendering) is left untouched, and
+// an empty baseURL is a no-op — this only ever helps, never breaks a URL
+// that was already complete.
+func ResolveURL(url, baseURL string) string {
+	if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
+		return url
+	}
+	if baseURL == "" {
+		return url
+	}
+	return strings.TrimRight(baseURL, "/") + "/" + strings.TrimLeft(url, "/")
+}
+
 var templateFuncs = template.FuncMap{
 	"hmacSHA256": func(key, msg string) string {
 		mac := hmac.New(sha256.New, []byte(key))

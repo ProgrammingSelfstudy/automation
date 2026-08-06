@@ -1009,6 +1009,15 @@ func TestCORS(t *testing.T) {
 	if got, want := options.Header().Get("Access-Control-Allow-Origin"), "http://localhost:5173"; got != want {
 		t.Fatalf("OPTIONS allowed origin = %q, want %q", got, want)
 	}
+
+	// Regression check: PUT /api/interfaces/{id} and PUT /api/environments/{id}
+	// are real routes, so a browser's PUT preflight must be allowed too — a
+	// prior version of corsAllowMethods omitted PUT, which made every browser
+	// silently refuse to ever send the actual PUT (curl-based checks never
+	// caught it because curl doesn't enforce CORS preflight at all).
+	if got := options.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(got, "PUT") {
+		t.Fatalf("Access-Control-Allow-Methods = %q, want it to contain PUT", got)
+	}
 }
 
 func TestExportTask(t *testing.T) {

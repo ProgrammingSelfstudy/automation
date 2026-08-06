@@ -76,10 +76,16 @@ func (h *handler) trySendInterface(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// An interface can be authored with just a path (e.g. "/oauth/token")
+	// instead of every one of them spelling out {{.env.BASE_URL}} — resolved
+	// against the active environment's BASE_URL variable, if any. A URL
+	// that's already absolute is left untouched.
+	requestURL := scenario.ResolveURL(rendered.URL, env.Variables["BASE_URL"])
+
 	response := trySendInterfaceResponse{
 		Request: trySendRequestResponse{
 			Method:  rendered.Method,
-			URL:     rendered.URL,
+			URL:     requestURL,
 			Headers: rendered.Headers,
 			Body:    rendered.Body,
 		},
@@ -95,7 +101,7 @@ func (h *handler) trySendInterface(w http.ResponseWriter, r *http.Request) {
 	ctx = scenario.WithResponseBodyLimit(ctx, trySendMaxResponseBytes)
 
 	startedAt := time.Now()
-	statusCode, body, err := httpDoer.Do(ctx, rendered.Method, rendered.URL, []byte(rendered.Body), rendered.Headers)
+	statusCode, body, err := httpDoer.Do(ctx, rendered.Method, requestURL, []byte(rendered.Body), rendered.Headers)
 	response.Response.CostMs = time.Since(startedAt).Milliseconds()
 	if len(body) > trySendMaxResponseBytes {
 		body = body[:trySendMaxResponseBytes]

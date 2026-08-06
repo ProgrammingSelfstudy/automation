@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "node --import tsx --test src/utils/headers.test.ts"
+    "test": "node --import tsx --test src/utils/headers.test.ts src/utils/md5.test.ts src/utils/sign.test.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.4",
