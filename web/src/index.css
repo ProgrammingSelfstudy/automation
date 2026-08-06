@@ -5,7 +5,7 @@
 :root {
   font-family: Inter, ui-sans-serif, system-ui, "Segoe UI", Roboto, Arial, sans-serif;
   color: #172033;
-  background: #f6fbff;
+  background: #020617;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -21,7 +21,7 @@ body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
-  background: #f6fbff;
+  background: #020617;
 }
 
 button,
@@ -45,31 +45,24 @@ textarea:disabled {
     z-index: -1;
     overflow: hidden;
     pointer-events: none;
-    background:
-      linear-gradient(116deg, rgba(232, 255, 249, 0.82) 0%, rgba(255, 255, 255, 0.9) 34%, rgba(242, 247, 255, 0.92) 72%, rgba(247, 244, 255, 0.84) 100%),
-      linear-gradient(90deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.78));
+    background: #020617;
   }
 
   .app-backdrop::before {
     position: absolute;
-    inset: -12% -8%;
+    inset: 0;
     content: "";
-    background:
-      radial-gradient(ellipse 36% 24% at 18% 18%, rgba(53, 226, 199, 0.2), transparent 68%),
-      radial-gradient(ellipse 30% 24% at 78% 18%, rgba(52, 145, 255, 0.18), transparent 70%),
-      radial-gradient(ellipse 34% 26% at 82% 76%, rgba(159, 136, 255, 0.16), transparent 70%),
-      radial-gradient(ellipse 28% 22% at 22% 76%, rgba(255, 200, 49, 0.13), transparent 72%);
-    filter: blur(18px);
+    background: linear-gradient(180deg, rgba(14, 165, 233, 0.1), transparent 34%);
   }
 
   .app-backdrop::after {
     position: absolute;
     inset: 0;
     content: "";
-    opacity: 0.36;
+    opacity: 0.22;
     background-image:
-      linear-gradient(rgba(22, 119, 255, 0.08) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(22, 119, 255, 0.07) 1px, transparent 1px);
+      linear-gradient(rgba(148, 163, 184, 0.14) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(148, 163, 184, 0.12) 1px, transparent 1px);
     background-size: 28px 28px;
     mask-image: linear-gradient(90deg, transparent, black 22%, black 78%, transparent);
   }

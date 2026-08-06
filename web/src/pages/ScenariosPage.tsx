@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { RefreshCw, Save } from 'lucide-react'
+import { Plus, RefreshCw, Save } from 'lucide-react'
 import { type FormEvent, useState } from 'react'
 
 import { createScenario, listScenarios } from '../api/client'
 import type { ScenarioStep } from '../api/client'
 import ScenarioStepEditor from '../components/ScenarioStepEditor'
+import SlideOver from '../components/SlideOver'
 import { formatDateTime, getErrorMessage } from '../utils/format'
 import { newScenarioStep } from '../utils/scenario'
 
@@ -13,6 +14,7 @@ export default function ScenariosPage() {
   const [name, setName] = useState('')
   const [steps, setSteps] = useState<ScenarioStep[]>([newScenarioStep(0)])
   const [formula, setFormula] = useState('')
+  const [createOpen, setCreateOpen] = useState(false)
   const [error, setError] = useState('')
 
   const scenariosQuery = useQuery({
@@ -28,6 +30,7 @@ export default function ScenariosPage() {
       setSteps([newScenarioStep(0)])
       setFormula('')
       setError('')
+      setCreateOpen(false)
     },
     onError: (mutationError) => setError(getErrorMessage(mutationError)),
   })
@@ -54,10 +57,16 @@ export default function ScenariosPage() {
             <h2 className="text-base font-semibold text-slate-950">场景库</h2>
             <div className="mt-1 text-sm text-slate-500">{scenarios.length} 个模板</div>
           </div>
-          <button className="btn btn-secondary" type="button" onClick={() => scenariosQuery.refetch()}>
-            <RefreshCw size={16} />
-            刷新
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button className="btn btn-secondary" type="button" onClick={() => scenariosQuery.refetch()}>
+              <RefreshCw size={16} />
+              刷新
+            </button>
+            <button className="btn btn-primary" type="button" onClick={() => setCreateOpen(true)}>
+              <Plus size={16} />
+              新建场景
+            </button>
+          </div>
         </div>
 
         {scenariosQuery.isError ? (
@@ -104,15 +113,8 @@ export default function ScenariosPage() {
         )}
       </section>
 
-      <form className="panel" onSubmit={submitScenario}>
-        <div className="toolbar">
-          <h2 className="text-base font-semibold text-slate-950">新建场景</h2>
-          <button className="btn btn-primary" disabled={createMutation.isPending} type="submit">
-            <Save size={16} />
-            保存
-          </button>
-        </div>
-        <div className="space-y-5 p-4 sm:p-5">
+      <SlideOver open={createOpen} title="新建场景" onClose={() => setCreateOpen(false)}>
+        <form className="space-y-5" onSubmit={submitScenario}>
           <label className="block max-w-2xl space-y-1">
             <span className="field-label">场景名称</span>
             <input className="input" value={name} onChange={(event) => setName(event.target.value)} />
@@ -127,8 +129,13 @@ export default function ScenariosPage() {
           />
 
           {error ? <div className="rounded-md bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
-        </div>
-      </form>
+
+          <button className="btn btn-primary w-full" disabled={createMutation.isPending} type="submit">
+            <Save size={16} />
+            保存
+          </button>
+        </form>
+      </SlideOver>
     </div>
   )
 }

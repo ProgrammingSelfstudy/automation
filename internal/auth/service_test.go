@@ -603,7 +603,7 @@ func hashPasswordForTest(t *testing.T, password string) string {
 
 func testTOTPSecret(t *testing.T) string {
 	t.Helper()
-	key, err := totp.Generate(totp.GenerateOpts{Issuer: totpIssuer, AccountName: "admin"})
+	key, err := totp.Generate(totp.GenerateOpts{Issuer: TOTPIssuer, AccountName: "admin"})
 	if err != nil {
 		t.Fatalf("totp.Generate() error = %v", err)
 	}
@@ -612,7 +612,7 @@ func testTOTPSecret(t *testing.T) string {
 
 func testTOTPSecretForBenchmark(b *testing.B) string {
 	b.Helper()
-	key, err := totp.Generate(totp.GenerateOpts{Issuer: totpIssuer, AccountName: "admin"})
+	key, err := totp.Generate(totp.GenerateOpts{Issuer: TOTPIssuer, AccountName: "admin"})
 	if err != nil {
 		b.Fatalf("totp.Generate() error = %v", err)
 	}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -359,6 +360,76 @@ func TestExecutorCanBeSharedConcurrently(t *testing.T) {
 	close(errs)
 	for err := range errs {
 		t.Error(err)
+	}
+}
+
+func TestRenderStepSupportsTemplateFuncs(t *testing.T) {
+	before := time.Now().Unix()
+	rendered, err := RenderStep(Step{
+		Name:    "signed",
+		Method:  "POST",
+		URL:     `https://api.example.test/{{ md5 "abc" }}`,
+		BodyTpl: `{{ hmacSHA256 "key" "The quick brown fox jumps over the lazy dog" }}`,
+		Headers: map[string]string{
+			"X-Timestamp": "{{ timestamp }}",
+			"X-Nonce":     "{{ nonce }}",
+		},
+	}, map[string]any{})
+	if err != nil {
+		t.Fatalf("RenderStep() error = %v", err)
+	}
+
+	if got, want := rendered.URL, "https://api.example.test/900150983cd24fb0d6963f7d28e17f72"; got != want {
+		t.Fatalf("rendered URL = %q, want %q", got, want)
+	}
+	if got, want := rendered.Body, "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"; got != want {
+		t.Fatalf("rendered body = %q, want %q", got, want)
+	}
+
+	timestamp, err := strconv.ParseInt(rendered.Headers["X-Timestamp"], 10, 64)
+	if err != nil {
+		t.Fatalf("timestamp header = %q, want unix timestamp", rendered.Headers["X-Timestamp"])
+	}
+	after := time.Now().Unix()
+	if timestamp < before || timestamp > after {
+		t.Fatalf("timestamp = %d, want between %d and %d", timestamp, before, after)
+	}
+
+	nonce := rendered.Headers["X-Nonce"]
+	if len(nonce) != 32 {
+		t.Fatalf("nonce length = %d, want 32", len(nonce))
+	}
+	if _, err := strconv.ParseUint(nonce[:16], 16, 64); err != nil {
+		t.Fatalf("nonce prefix = %q, want hexadecimal", nonce[:16])
+	}
+	if _, err := strconv.ParseUint(nonce[16:], 16, 64); err != nil {
+		t.Fatalf("nonce suffix = %q, want hexadecimal", nonce[16:])
+	}
+}
+
+func TestMergeHeadersAppliesEnvironmentDefaultsThenStepOverrides(t *testing.T) {
+	envHeaders := map[string]string{
+		"Authorization": "Bearer env",
+		"X-Env":         "dev",
+	}
+	stepHeaders := map[string]string{
+		"Authorization": "Bearer step",
+		"X-Step":        "one",
+	}
+
+	got := MergeHeaders(envHeaders, stepHeaders)
+	want := map[string]string{
+		"Authorization": "Bearer step",
+		"X-Env":         "dev",
+		"X-Step":        "one",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("MergeHeaders() = %#v, want %#v", got, want)
+	}
+
+	got["X-Env"] = "mutated"
+	if envHeaders["X-Env"] != "dev" {
+		t.Fatalf("MergeHeaders() reused source map")
 	}
 }
 

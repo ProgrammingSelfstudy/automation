@@ -3,6 +3,11 @@ package scenario
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/md5"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"math"
@@ -53,6 +58,8 @@ type HTTPDoer interface {
 	Do(ctx context.Context, method, url string, body []byte, headers map[string]string) (statusCode int, respBody []byte, err error)
 }
 
+type responseBodyLimitKey struct{}
+
 type httpClientDoer struct {
 	client *http.Client
 }
@@ -91,7 +98,12 @@ func (d *httpClientDoer) Do(ctx context.Context, method, url string, body []byte
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	reader := io.Reader(resp.Body)
+	if limit := responseBodyLimit(ctx); limit > 0 {
+		reader = io.LimitReader(resp.Body, limit+1)
+	}
+
+	respBody, err := io.ReadAll(reader)
 	if err != nil {
 		return resp.StatusCode, nil, err
 	}
@@ -99,8 +111,95 @@ func (d *httpClientDoer) Do(ctx context.Context, method, url string, body []byte
 	return resp.StatusCode, respBody, nil
 }
 
+// WithResponseBodyLimit asks the standard HTTPDoer to read at most limit+1 bytes.
+func WithResponseBodyLimit(ctx context.Context, limit int64) context.Context {
+	if limit <= 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, responseBodyLimitKey{}, limit)
+}
+
+func responseBodyLimit(ctx context.Context) int64 {
+	limit, ok := ctx.Value(responseBodyLimitKey{}).(int64)
+	if !ok || limit <= 0 {
+		return 0
+	}
+	return limit
+}
+
+type RenderedStep struct {
+	Method  string
+	URL     string
+	Body    string
+	Headers map[string]string
+}
+
+// RenderStep renders URL, body, and headers with the same template behavior as execution.
+func RenderStep(step Step, vars map[string]any) (RenderedStep, error) {
+	name := step.Name
+	if strings.TrimSpace(name) == "" {
+		name = "step"
+	}
+
+	url, err := renderTemplate("step."+name+".url", step.URL, vars)
+	if err != nil {
+		return RenderedStep{}, fmt.Errorf("render url: %w", err)
+	}
+
+	body, err := renderTemplate("step."+name+".body", step.BodyTpl, vars)
+	if err != nil {
+		return RenderedStep{}, fmt.Errorf("render body: %w", err)
+	}
+
+	headers, err := renderHeaders(step.Headers, vars)
+	if err != nil {
+		return RenderedStep{}, err
+	}
+
+	return RenderedStep{
+		Method:  step.Method,
+		URL:     url,
+		Body:    body,
+		Headers: headers,
+	}, nil
+}
+
+// MergeHeaders applies environment defaults first, then lets step headers override them.
+func MergeHeaders(envHeaders, stepHeaders map[string]string) map[string]string {
+	merged := make(map[string]string, len(envHeaders)+len(stepHeaders))
+	for key, value := range envHeaders {
+		merged[key] = value
+	}
+	for key, value := range stepHeaders {
+		merged[key] = value
+	}
+	return merged
+}
+
+var templateFuncs = template.FuncMap{
+	"hmacSHA256": func(key, msg string) string {
+		mac := hmac.New(sha256.New, []byte(key))
+		_, _ = mac.Write([]byte(msg))
+		return hex.EncodeToString(mac.Sum(nil))
+	},
+	"md5": func(s string) string {
+		sum := md5.Sum([]byte(s))
+		return hex.EncodeToString(sum[:])
+	},
+	"timestamp": func() string {
+		return strconv.FormatInt(time.Now().Unix(), 10)
+	},
+	"nonce": func() string {
+		raw := make([]byte, 16)
+		if _, err := rand.Read(raw); err != nil {
+			return ""
+		}
+		return hex.EncodeToString(raw)
+	},
+}
+
 func renderTemplate(name string, tpl string, vars map[string]any) (string, error) {
-	parsed, err := template.New(name).Option("missingkey=error").Parse(tpl)
+	parsed, err := template.New(name).Option("missingkey=error").Funcs(templateFuncs).Parse(tpl)
 	if err != nil {
 		return "", err
 	}

@@ -32,6 +32,30 @@ export type InterfaceResponse = {
   created_at: string
 }
 
+export type EnvironmentResponse = {
+  id: string
+  name: string
+  variables: Record<string, string>
+  default_headers: Record<string, string>
+  created_at: string
+}
+
+export type TrySendInterfaceResponse = {
+  request: {
+    method: string
+    url: string
+    headers: Record<string, string>
+    body: string
+  }
+  response: {
+    status_code: number
+    body: string
+    cost_ms: number
+    truncated: boolean
+  }
+  error: string
+}
+
 export type AuthUser = {
   id: string
   username: string
@@ -41,15 +65,6 @@ export type AuthUser = {
 
 export type AuthUserResponse = {
   user: AuthUser
-}
-
-export type TOTPSetupResponse = {
-  secret: string
-  otpauth_url: string
-}
-
-export type TOTPConfirmResponse = AuthUserResponse & {
-  backup_codes: string[]
 }
 
 export type LoadTestConfig = {
@@ -254,6 +269,45 @@ export function createInterface(payload: { name: string; step: ScenarioStep }) {
   })
 }
 
+export function updateInterface(id: string, payload: { name: string; step: ScenarioStep }) {
+  return request<InterfaceResponse>(`/api/interfaces/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function listEnvironments() {
+  return request<EnvironmentResponse[]>('/api/environments')
+}
+
+export function createEnvironment(payload: {
+  name: string
+  variables?: Record<string, string>
+  default_headers?: Record<string, string>
+}) {
+  return request<EnvironmentResponse>('/api/environments', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function updateEnvironment(
+  id: string,
+  payload: { name: string; variables: Record<string, string>; default_headers: Record<string, string> },
+) {
+  return request<EnvironmentResponse>(`/api/environments/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function trySendInterface(payload: { step: ScenarioStep; environment_id?: string }) {
+  return request<TrySendInterfaceResponse>('/api/interfaces/try-send', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
 export function listScenarios() {
   return request<ScenarioResponse[]>('/api/scenarios')
 }
@@ -272,20 +326,6 @@ export function login(payload: {
   backup_code?: string
 }) {
   return request<AuthUserResponse>('/api/auth/login', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  })
-}
-
-export function setupTOTP(payload: { username: string; password: string }) {
-  return request<TOTPSetupResponse>('/api/auth/totp/setup', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  })
-}
-
-export function confirmTOTP(payload: { username: string; password: string; code: string }) {
-  return request<TOTPConfirmResponse>('/api/auth/totp/confirm', {
     method: 'POST',
     body: JSON.stringify(payload),
   })

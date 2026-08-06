@@ -17,12 +17,14 @@ import (
 const (
 	insertInterfaceSQL = `INSERT INTO api_interface (id, name, definition) VALUES (?, ?, ?)`
 	listInterfacesSQL  = `SELECT id, name, definition, created_at FROM api_interface ORDER BY created_at DESC`
+	updateInterfaceSQL = `UPDATE api_interface SET name = ?, definition = ? WHERE id = ?`
 )
 
 var (
 	ErrNameRequired   = errors.New("interface name is required")
 	ErrMethodRequired = errors.New("method is required")
 	ErrURLRequired    = errors.New("url is required")
+	ErrNotFound       = errors.New("interface not found")
 )
 
 // Interface is a reusable HTTP interface definition.
@@ -37,6 +39,7 @@ type Interface struct {
 type Store interface {
 	Create(ctx context.Context, i *Interface) error
 	List(ctx context.Context) ([]Interface, error)
+	Update(ctx context.Context, i *Interface) error
 }
 
 // SQLStore is a database/sql backed Store.
@@ -64,22 +67,12 @@ func NewMySQLStore(dsn string) (*SQLStore, error) {
 
 // Create validates and stores an interface definition.
 func (s *SQLStore) Create(ctx context.Context, iface *Interface) error {
-	if strings.TrimSpace(iface.Name) == "" {
-		return ErrNameRequired
-	}
-	if strings.TrimSpace(iface.Step.Method) == "" {
-		return ErrMethodRequired
-	}
-	if strings.TrimSpace(iface.Step.URL) == "" {
-		return ErrURLRequired
+	definition, err := marshalInterfaceDefinition(iface)
+	if err != nil {
+		return err
 	}
 	if iface.ID == "" {
 		iface.ID = uuid.NewString()
-	}
-
-	definition, err := json.Marshal(iface.Step)
-	if err != nil {
-		return err
 	}
 
 	_, err = s.db.ExecContext(ctx, insertInterfaceSQL, iface.ID, iface.Name, string(definition))
@@ -107,6 +100,41 @@ func (s *SQLStore) List(ctx context.Context) ([]Interface, error) {
 	}
 
 	return interfaces, nil
+}
+
+// Update replaces an existing interface definition.
+func (s *SQLStore) Update(ctx context.Context, iface *Interface) error {
+	definition, err := marshalInterfaceDefinition(iface)
+	if err != nil {
+		return err
+	}
+
+	result, err := s.db.ExecContext(ctx, updateInterfaceSQL, iface.Name, string(definition), iface.ID)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func marshalInterfaceDefinition(iface *Interface) ([]byte, error) {
+	if strings.TrimSpace(iface.Name) == "" {
+		return nil, ErrNameRequired
+	}
+	if strings.TrimSpace(iface.Step.Method) == "" {
+		return nil, ErrMethodRequired
+	}
+	if strings.TrimSpace(iface.Step.URL) == "" {
+		return nil, ErrURLRequired
+	}
+
+	return json.Marshal(iface.Step)
 }
 
 type interfaceScanner interface {
