@@ -589,7 +589,7 @@ func TestCreatePerfTask(t *testing.T) {
 		if string(task.Samples) != `[{"cpu":1.2}]` {
 			t.Fatalf("perf task samples = %s", task.Samples)
 		}
-		task.ID = "perf-1"
+		task.ID = 1
 		task.CreatedAt = testHTTPTime()
 		return nil
 	}
@@ -601,7 +601,7 @@ func TestCreatePerfTask(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusCreated, resp.Body.String())
 	}
 	got := decodeObject(t, resp.Body)
-	if got["id"] != "perf-1" || got["user_id"] != "user-1" {
+	if got["id"] != float64(1) || got["user_id"] != "user-1" {
 		t.Fatalf("response identity = %#v", got)
 	}
 	if _, hasSamples := got["samples"]; hasSamples {
@@ -624,7 +624,7 @@ func TestCreatePerfTaskValidationError(t *testing.T) {
 func TestListPerfTasksOmitsSamples(t *testing.T) {
 	deps := newHTTPTestDeps()
 	deps.perfTasks.items = []perfstore.PerfTaskSummary{
-		{ID: "perf-1", UserID: "user-1", DeviceID: "device-1", Platform: "android", Status: "finished", CreatedAt: testHTTPTime()},
+		{ID: 1, UserID: "user-1", DeviceID: "device-1", Platform: "android", Status: "finished", CreatedAt: testHTTPTime()},
 	}
 	router := NewRouter(deps.Dependencies())
 
@@ -637,7 +637,7 @@ func TestListPerfTasksOmitsSamples(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
-	if len(body) != 1 || body[0]["id"] != "perf-1" {
+	if len(body) != 1 || body[0]["id"] != float64(1) {
 		t.Fatalf("perf task list response = %#v", body)
 	}
 	if _, hasSamples := body[0]["samples"]; hasSamples {
@@ -655,13 +655,13 @@ func TestListPerfTasksOmitsSamples(t *testing.T) {
 func TestGetPerfTaskIncludesSamples(t *testing.T) {
 	deps := newHTTPTestDeps()
 	deps.perfTasks.items = []perfstore.PerfTaskSummary{
-		{ID: "perf-1", UserID: "user-1", DeviceID: "device-1", Platform: "android", Status: "finished", CreatedAt: testHTTPTime()},
+		{ID: 1, UserID: "user-1", DeviceID: "device-1", Platform: "android", Status: "finished", CreatedAt: testHTTPTime()},
 	}
-	deps.perfTasks.samples = map[string]json.RawMessage{"perf-1": json.RawMessage(`[{"cpu":1.2}]`)}
+	deps.perfTasks.samples = map[int64]json.RawMessage{1: json.RawMessage(`[{"cpu":1.2}]`)}
 	router := NewRouter(deps.Dependencies())
 
 	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, authenticatedRequest(http.MethodGet, "/api/perf/tasks/perf-1", nil))
+	router.ServeHTTP(resp, authenticatedRequest(http.MethodGet, "/api/perf/tasks/1", nil))
 	if resp.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusOK, resp.Body.String())
 	}
@@ -677,39 +677,49 @@ func TestGetPerfTaskNotFound(t *testing.T) {
 	router := NewRouter(deps.Dependencies())
 
 	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, authenticatedRequest(http.MethodGet, "/api/perf/tasks/missing", nil))
+	router.ServeHTTP(resp, authenticatedRequest(http.MethodGet, "/api/perf/tasks/999", nil))
 
 	assertErrorResponse(t, resp, http.StatusNotFound, perfstore.ErrNotFound.Error())
 }
 
+func TestGetPerfTaskInvalidID(t *testing.T) {
+	deps := newHTTPTestDeps()
+	router := NewRouter(deps.Dependencies())
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, authenticatedRequest(http.MethodGet, "/api/perf/tasks/not-a-number", nil))
+
+	assertErrorResponse(t, resp, http.StatusBadRequest, "invalid id")
+}
+
 func TestDeletePerfTask(t *testing.T) {
 	deps := newHTTPTestDeps()
-	var deletedID string
-	deps.perfTasks.deleteFunc = func(ctx context.Context, id string) error {
+	var deletedID int64
+	deps.perfTasks.deleteFunc = func(ctx context.Context, id int64) error {
 		deletedID = id
 		return nil
 	}
 	router := NewRouter(deps.Dependencies())
 
 	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, authenticatedRequest(http.MethodDelete, "/api/perf/tasks/perf-1", nil))
+	router.ServeHTTP(resp, authenticatedRequest(http.MethodDelete, "/api/perf/tasks/1", nil))
 	if resp.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusNoContent, resp.Body.String())
 	}
-	if deletedID != "perf-1" {
-		t.Fatalf("deleted id = %q, want perf-1", deletedID)
+	if deletedID != 1 {
+		t.Fatalf("deleted id = %d, want 1", deletedID)
 	}
 }
 
 func TestDeletePerfTaskNotFound(t *testing.T) {
 	deps := newHTTPTestDeps()
-	deps.perfTasks.deleteFunc = func(context.Context, string) error {
+	deps.perfTasks.deleteFunc = func(context.Context, int64) error {
 		return perfstore.ErrNotFound
 	}
 	router := NewRouter(deps.Dependencies())
 
 	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, authenticatedRequest(http.MethodDelete, "/api/perf/tasks/missing", nil))
+	router.ServeHTTP(resp, authenticatedRequest(http.MethodDelete, "/api/perf/tasks/999", nil))
 
 	assertErrorResponse(t, resp, http.StatusNotFound, perfstore.ErrNotFound.Error())
 }
@@ -1906,23 +1916,23 @@ func (s *fakeHTTPEnvironmentStore) Update(ctx context.Context, env *environments
 
 type fakeHTTPPerfStore struct {
 	items      []perfstore.PerfTaskSummary
-	samples    map[string]json.RawMessage
+	samples    map[int64]json.RawMessage
 	createFunc func(context.Context, *perfstore.PerfTask) error
-	getFunc    func(context.Context, string) (*perfstore.PerfTask, error)
+	getFunc    func(context.Context, int64) (*perfstore.PerfTask, error)
 	listFunc   func(context.Context) ([]perfstore.PerfTaskSummary, error)
-	deleteFunc func(context.Context, string) error
+	deleteFunc func(context.Context, int64) error
 }
 
 func (s *fakeHTTPPerfStore) Create(ctx context.Context, task *perfstore.PerfTask) error {
 	if s.createFunc != nil {
 		return s.createFunc(ctx, task)
 	}
-	task.ID = "perf-1"
+	task.ID = 1
 	task.CreatedAt = testHTTPTime()
 	return nil
 }
 
-func (s *fakeHTTPPerfStore) Get(ctx context.Context, id string) (*perfstore.PerfTask, error) {
+func (s *fakeHTTPPerfStore) Get(ctx context.Context, id int64) (*perfstore.PerfTask, error) {
 	if s.getFunc != nil {
 		return s.getFunc(ctx, id)
 	}
@@ -1944,7 +1954,7 @@ func (s *fakeHTTPPerfStore) List(ctx context.Context) ([]perfstore.PerfTaskSumma
 	return s.items, nil
 }
 
-func (s *fakeHTTPPerfStore) Delete(ctx context.Context, id string) error {
+func (s *fakeHTTPPerfStore) Delete(ctx context.Context, id int64) error {
 	if s.deleteFunc != nil {
 		return s.deleteFunc(ctx, id)
 	}

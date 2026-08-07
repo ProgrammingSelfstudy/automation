@@ -101,7 +101,7 @@ export type AccountResponse = {
 export type PerfTaskStatus = 'collecting' | 'stopped' | 'interrupted' | 'error' | string
 
 export type PerfTaskSummaryResponse = {
-  id: string
+  id: number
   user_id: string
   device_id: string
   package_name: string
@@ -361,8 +361,8 @@ export function listPerfTasks() {
   return request<PerfTaskSummaryResponse[]>('/api/perf/tasks')
 }
 
-export function getPerfTask(id: string) {
-  return request<PerfTaskResponse>(`/api/perf/tasks/${encodeURIComponent(id)}`)
+export function getPerfTask(id: number) {
+  return request<PerfTaskResponse>(`/api/perf/tasks/${id}`)
 }
 
 export function createPerfTask(payload: CreatePerfTaskRequest) {
@@ -372,8 +372,8 @@ export function createPerfTask(payload: CreatePerfTaskRequest) {
   })
 }
 
-export function deletePerfTask(id: string) {
-  return request<void>(`/api/perf/tasks/${encodeURIComponent(id)}`, {
+export function deletePerfTask(id: number) {
+  return request<void>(`/api/perf/tasks/${id}`, {
     method: 'DELETE',
   })
 }

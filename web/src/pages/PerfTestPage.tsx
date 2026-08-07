@@ -69,7 +69,7 @@ export default function PerfTestPage() {
   const [uploadError, setUploadError] = useState('')
   const wsCleanup = useRef<(() => void) | null>(null)
 
-  const [detailID, setDetailID] = useState<string | null>(null)
+  const [detailID, setDetailID] = useState<number | null>(null)
   const [pendingUploads, setPendingUploads] = useState<QueuedPerfUpload[]>(() => loadQueuedPerfUploads())
   const [retryingUploads, setRetryingUploads] = useState(false)
 
@@ -116,7 +116,7 @@ export default function PerfTestPage() {
 
   const detailQuery = useQuery({
     queryKey: ['perf-tasks', detailID],
-    queryFn: () => getPerfTask(detailID as string),
+    queryFn: () => getPerfTask(detailID as number),
     enabled: detailID !== null,
   })
 

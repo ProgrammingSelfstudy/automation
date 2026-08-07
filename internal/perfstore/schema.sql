@@ -1,5 +1,5 @@
 CREATE TABLE perf_task (
-    id                  VARCHAR(36) PRIMARY KEY,
+    id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
     user_id             VARCHAR(36) NOT NULL,
     device_id           VARCHAR(128) NOT NULL,
     package_name        VARCHAR(255) NOT NULL,

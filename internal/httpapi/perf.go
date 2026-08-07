@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 
 	"interface-load-test/internal/perfstore"
@@ -28,7 +29,7 @@ type perfTaskRequest struct {
 }
 
 type perfTaskSummaryResponse struct {
-	ID               string    `json:"id"`
+	ID               int64     `json:"id"`
 	UserID           string    `json:"user_id"`
 	DeviceID         string    `json:"device_id"`
 	PackageName      string    `json:"package_name"`
@@ -104,7 +105,13 @@ func (h *handler) listPerfTasks(w http.ResponseWriter, r *http.Request) {
 
 // getPerfTask 返回单条完整记录，包含 samples，用于图表回放。
 func (h *handler) getPerfTask(w http.ResponseWriter, r *http.Request) {
-	task, err := h.deps.PerfStore.Get(r.Context(), r.PathValue("id"))
+	id, err := parsePerfTaskID(r)
+	if err != nil {
+		writeBadRequest(w, "invalid id")
+		return
+	}
+
+	task, err := h.deps.PerfStore.Get(r.Context(), id)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -117,11 +124,21 @@ func (h *handler) getPerfTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) deletePerfTask(w http.ResponseWriter, r *http.Request) {
-	if err := h.deps.PerfStore.Delete(r.Context(), r.PathValue("id")); err != nil {
+	id, err := parsePerfTaskID(r)
+	if err != nil {
+		writeBadRequest(w, "invalid id")
+		return
+	}
+
+	if err := h.deps.PerfStore.Delete(r.Context(), id); err != nil {
 		writeError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func parsePerfTaskID(r *http.Request) (int64, error) {
+	return strconv.ParseInt(r.PathValue("id"), 10, 64)
 }
 
 func newPerfTaskSummaryResponse(t perfstore.PerfTaskSummary) perfTaskSummaryResponse {

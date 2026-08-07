@@ -3,7 +3,6 @@ package perfstore
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"errors"
 	"regexp"
 	"testing"
@@ -64,7 +63,6 @@ func TestCreateGeneratesIDAndStoresSamples(t *testing.T) {
 
 	mock.ExpectExec(regexp.QuoteMeta(insertPerfTaskSQL)).
 		WithArgs(
-			anyPerfTaskID{},
 			"user-1",
 			"device-1",
 			"com.example.app",
@@ -79,13 +77,13 @@ func TestCreateGeneratesIDAndStoresSamples(t *testing.T) {
 			nil,
 			string(task.Samples),
 		).
-		WillReturnResult(sqlmock.NewResult(1, 1))
+		WillReturnResult(sqlmock.NewResult(42, 1))
 
 	if err := store.Create(context.Background(), task); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	if task.ID == "" {
-		t.Fatal("Create() did not generate task ID")
+	if task.ID != 42 {
+		t.Fatalf("Create() task.ID = %d, want 42 (from LastInsertId)", task.ID)
 	}
 	assertPerfTaskExpectations(t, mock)
 }
@@ -104,7 +102,6 @@ func TestCreateDefaultsEmptySamples(t *testing.T) {
 
 	mock.ExpectExec(regexp.QuoteMeta(insertPerfTaskSQL)).
 		WithArgs(
-			anyPerfTaskID{},
 			"user-1",
 			"device-1",
 			"",
@@ -136,16 +133,16 @@ func TestGetReturnsFullRecord(t *testing.T) {
 	samples := `[{"cpu":1.2}]`
 
 	mock.ExpectQuery(regexp.QuoteMeta(getPerfTaskSQL)).
-		WithArgs("task-1").
+		WithArgs(int64(1)).
 		WillReturnRows(sqlmock.NewRows(perfTaskDetailColumns()).
-			AddRow("task-1", "user-1", "device-1", "com.example.app", "com.example.app",
+			AddRow(int64(1), "user-1", "device-1", "com.example.app", "com.example.app",
 				"android", "Pixel 7", "finished", startTime, stopTime, int64(1000), 1, nil, samples, createdAt))
 
-	got, err := store.Get(context.Background(), "task-1")
+	got, err := store.Get(context.Background(), 1)
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
-	if got.ID != "task-1" || got.UserID != "user-1" || got.DeviceID != "device-1" {
+	if got.ID != 1 || got.UserID != "user-1" || got.DeviceID != "device-1" {
 		t.Fatalf("task metadata = %#v", got)
 	}
 	if string(got.Samples) != samples {
@@ -159,10 +156,10 @@ func TestGetReturnsNotFound(t *testing.T) {
 	store := NewSQLStore(db)
 
 	mock.ExpectQuery(regexp.QuoteMeta(getPerfTaskSQL)).
-		WithArgs("missing").
+		WithArgs(int64(999)).
 		WillReturnError(sql.ErrNoRows)
 
-	_, err := store.Get(context.Background(), "missing")
+	_, err := store.Get(context.Background(), 999)
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Get() error = %v, want %v", err, ErrNotFound)
 	}
@@ -178,9 +175,9 @@ func TestListMapsRowsWithoutSamples(t *testing.T) {
 
 	mock.ExpectQuery(regexp.QuoteMeta(listPerfTaskSQL)).
 		WillReturnRows(sqlmock.NewRows(perfTaskSummaryColumns()).
-			AddRow("task-2", "user-1", "device-1", "com.example.app", "com.example.app",
+			AddRow(int64(2), "user-1", "device-1", "com.example.app", "com.example.app",
 				"android", "Pixel 7", "finished", firstStart, firstStart.Add(time.Minute), int64(1000), 1, nil, createdAt).
-			AddRow("task-1", "user-1", "device-2", "com.example.other", "com.example.other",
+			AddRow(int64(1), "user-1", "device-2", "com.example.other", "com.example.other",
 				"ios", nil, "interrupted", secondStart, secondStart.Add(time.Minute), int64(500), 3, "device disconnected", createdAt))
 
 	got, err := store.List(context.Background())
@@ -190,10 +187,10 @@ func TestListMapsRowsWithoutSamples(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("len(List()) = %d, want 2", len(got))
 	}
-	if got[0].ID != "task-2" || got[0].DeviceModel != "Pixel 7" {
+	if got[0].ID != 2 || got[0].DeviceModel != "Pixel 7" {
 		t.Fatalf("first summary = %#v", got[0])
 	}
-	if got[1].ID != "task-1" || got[1].DeviceModel != "" || got[1].LastError != "device disconnected" {
+	if got[1].ID != 1 || got[1].DeviceModel != "" || got[1].LastError != "device disconnected" {
 		t.Fatalf("second summary = %#v", got[1])
 	}
 	assertPerfTaskExpectations(t, mock)
@@ -224,10 +221,10 @@ func TestDeleteRemovesRow(t *testing.T) {
 	store := NewSQLStore(db)
 
 	mock.ExpectExec(regexp.QuoteMeta(deletePerfTaskSQL)).
-		WithArgs("task-1").
+		WithArgs(int64(1)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	if err := store.Delete(context.Background(), "task-1"); err != nil {
+	if err := store.Delete(context.Background(), 1); err != nil {
 		t.Fatalf("Delete() error = %v", err)
 	}
 	assertPerfTaskExpectations(t, mock)
@@ -238,21 +235,14 @@ func TestDeleteReturnsNotFoundWhenNoRowsAffected(t *testing.T) {
 	store := NewSQLStore(db)
 
 	mock.ExpectExec(regexp.QuoteMeta(deletePerfTaskSQL)).
-		WithArgs("missing").
+		WithArgs(int64(999)).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
-	err := store.Delete(context.Background(), "missing")
+	err := store.Delete(context.Background(), 999)
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Delete() error = %v, want %v", err, ErrNotFound)
 	}
 	assertPerfTaskExpectations(t, mock)
-}
-
-type anyPerfTaskID struct{}
-
-func (anyPerfTaskID) Match(value driver.Value) bool {
-	id, ok := value.(string)
-	return ok && id != ""
 }
 
 func newPerfTaskMockDB(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {

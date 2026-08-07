@@ -9,14 +9,16 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/google/uuid"
 )
 
 const (
+	// id 是 BIGINT AUTO_INCREMENT，不在 INSERT 列表里——数据库分配后
+	// 用 LastInsertId() 读回来，这样任务 ID 是"123"这样短的数字，方便
+	// 压测时口头对答案、贴日志，不用比对一串 UUID。
 	insertPerfTaskSQL = `INSERT INTO perf_task
-		(id, user_id, device_id, package_name, process_name, platform, device_model,
+		(user_id, device_id, package_name, process_name, platform, device_model,
 		 status, start_time, stop_time, sample_interval_ms, sample_count, last_error, samples)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	getPerfTaskSQL = `SELECT id, user_id, device_id, package_name, process_name, platform, device_model,
 		status, start_time, stop_time, sample_interval_ms, sample_count, last_error, samples, created_at
@@ -39,7 +41,7 @@ var (
 
 // PerfTaskSummary 是历史列表返回的摘要，不含完整 samples。
 type PerfTaskSummary struct {
-	ID               string
+	ID               int64
 	UserID           string
 	DeviceID         string
 	PackageName      string
@@ -69,12 +71,12 @@ type PerfTask struct {
 // Store 持久化性能采集历史记录。
 type Store interface {
 	Create(ctx context.Context, task *PerfTask) error
-	Get(ctx context.Context, id string) (*PerfTask, error)
-	// List 目前返回全部记录，不按用户过滤——多用户数据隔离的权限模型
-	// 还没有定（见架构文档 Phase 4），先把 user_id 存下来，后面要收窄
-	// 可见范围时不需要再做一次数据迁移。
+	Get(ctx context.Context, id int64) (*PerfTask, error)
+	// List 返回全部记录，不按用户过滤——产品决定性能测试的历史数据所有
+	// 登录用户都能互相看到，不用按团队/项目隔离（架构文档 Phase 4 曾经
+	// 标注为待定，现在已确认不需要）。user_id 仍然存着，用来标记是谁上报的。
 	List(ctx context.Context) ([]PerfTaskSummary, error)
-	Delete(ctx context.Context, id string) error
+	Delete(ctx context.Context, id int64) error
 }
 
 // SQLStore 是基于 database/sql 的 Store 实现。
@@ -108,17 +110,13 @@ func (s *SQLStore) Create(ctx context.Context, task *PerfTask) error {
 	if strings.TrimSpace(task.DeviceID) == "" {
 		return ErrDeviceIDRequired
 	}
-	if task.ID == "" {
-		task.ID = uuid.NewString()
-	}
 	if task.Samples == nil {
 		task.Samples = json.RawMessage("[]")
 	}
 
-	_, err := s.db.ExecContext(
+	result, err := s.db.ExecContext(
 		ctx,
 		insertPerfTaskSQL,
-		task.ID,
 		task.UserID,
 		task.DeviceID,
 		task.PackageName,
@@ -133,11 +131,20 @@ func (s *SQLStore) Create(ctx context.Context, task *PerfTask) error {
 		nullableString(task.LastError),
 		string(task.Samples),
 	)
-	return err
+	if err != nil {
+		return err
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		return err
+	}
+	task.ID = id
+	return nil
 }
 
 // Get 按 ID 查询一条完整记录，包含 samples。
-func (s *SQLStore) Get(ctx context.Context, id string) (*PerfTask, error) {
+func (s *SQLStore) Get(ctx context.Context, id int64) (*PerfTask, error) {
 	row := s.db.QueryRowContext(ctx, getPerfTaskSQL, id)
 
 	var task PerfTask
@@ -219,7 +226,7 @@ func (s *SQLStore) List(ctx context.Context) ([]PerfTaskSummary, error) {
 }
 
 // Delete 删除一条历史记录。
-func (s *SQLStore) Delete(ctx context.Context, id string) error {
+func (s *SQLStore) Delete(ctx context.Context, id int64) error {
 	result, err := s.db.ExecContext(ctx, deletePerfTaskSQL, id)
 	if err != nil {
 		return err

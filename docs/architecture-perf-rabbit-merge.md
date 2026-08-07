@@ -107,8 +107,8 @@ type Module interface {
 **方案 A：一张表，samples 整体存一个 JSON 列**（仿照 `environmentstore.variables`/`scenariostore.definition` 已经在用的模式）
 ```sql
 CREATE TABLE perf_task (
-    id               VARCHAR(36) PRIMARY KEY,
-    user_id          VARCHAR(36) NOT NULL,   -- 上报这条记录的登录用户，做数据隔离用
+    id               BIGINT AUTO_INCREMENT PRIMARY KEY,  -- 短数字 ID，压测时口头对答案/贴日志方便，产品决定不用 UUID
+    user_id          VARCHAR(36) NOT NULL,   -- 上报这条记录的登录用户，仅做归属记录，不做可见性过滤（见下面"好处"里的说明）
     device_id        VARCHAR(128) NOT NULL,
     package_name     VARCHAR(255) NOT NULL,
     process_name     VARCHAR(255) NOT NULL,
@@ -139,7 +139,7 @@ CREATE TABLE perf_task (
 ## 好处
 
 - **统一入口**：一次登录，接口压测和性能测试共用同一个 Web 界面、同一套账号体系
-- **历史记录多端可见**：现在 perf-rabbit 的采集记录锁在"当时那台电脑的本地文件"里，换台电脑就看不到；并入之后存 MySQL，谁登录都能看团队里任何一次采集的历史（后续要不要做权限收窄，是 Phase 4 数据隔离要解决的点）
+- **历史记录多端可见**：现在 perf-rabbit 的采集记录锁在"当时那台电脑的本地文件"里，换台电脑就看不到；并入之后存 MySQL，谁登录都能看团队里任何一次采集的历史（产品已确认：数据展示不做隔离，所有登录用户可见全部记录，`user_id` 只留归属信息，不加可见性过滤）
 - **代码可发现性**：以后新人加入，一个仓库能看到公司内部全部自研工具，不用到处打听"性能采集那个工具的仓库在哪"
 - **为真正的数据打通留了口子**：以后如果想做"这次接口压测跑的时候顺便看一眼手机端的性能曲线"，两边数据都在同一个 MySQL 里，做关联查询/统一报表是自然而然的事；如果两边一直是完全独立的两个系统，这种关联能力以后要专门补一套同步机制
 - **通信范式统一**：性能采集也走 WebSocket 推送之后，前端只需要维护一套"处理服务端推送"的逻辑，不用一边处理 WS 消息一边处理轮询结果
@@ -173,6 +173,6 @@ CREATE TABLE perf_task (
 - **Phase 1（本次）**：perf-rabbit、perf-rabbit-web 代码原样并入仓库（各自独立 go.mod/package.json），本文档完成
 - **Phase 2**：`internal/perfstore`（MySQL 版历史存储，方案 A）；perf-rabbit 的 Gin handler 改写成标准库风格、WebSocket 替换轮询；本地 Agent 新增"任务停止后上报中心平台"逻辑（先做"浏览器转发"这个简单版本，如果上面反向思考第 1 点的丢数据风险不可接受，再升级成"Agent 直接上报"）；中心平台新增 Agent 安装包下载入口 + 本地 Agent 存活探测
 - **Phase 3**：前端"性能测试"导航模块（设备列表、开始/停止采集、实时图表、历史列表/详情）。**界面风格必须跟"接口测试"模块保持一致**——复用 automation 前端现有的设计系统（左侧模块导航、`glass-panel`/`panel` 玻璃质感、`data-table` 列表、`SlideOver` 抽屉、`btn-primary`/`btn-secondary` 等既有样式类），只搬 `perf_rabbit_web` 的业务逻辑（设备列表加载、采集状态机、图表渲染），不搬它自己原来那套视觉样式，两个模块要看起来是同一个产品，不是拼进来的两套皮
-- **Phase 4**：多用户数据隔离权限模型；~~Agent/中心平台版本兼容检查~~（已完成：Agent 新增 `GET /api/agent/info` 上报 `common.AgentVersion`，前端 `probePerfAgent` 探测时一并拿版本号跟 `MIN_COMPATIBLE_AGENT_VERSION` 比较，不兼容则提示升级而不是"未检测到"；这两个版本号常量分别在 `perf-rabbit/client/common/version.go` 和 `web/src/api/perfAgent.ts`，以后改协议要同时改）；~~离线上报重试机制~~（已完成 browser-side 这一版：`web/src/utils/perfUploadQueue.ts` 用 localStorage 落一份待重传队列，采集停止拿到最终记录后先入队再尝试上报，上报成功才出队；页面加载时自动重试队列里积压的记录，也提供手动"重试上报"按钮。这解决的是"网络抖动/标签页被关掉又重开"这类同一浏览器内的场景，解决不了"反向思考"第 1 点里"换了台电脑/清了浏览器数据"这种更极端的丢失——如果以后判断这个风险不可接受，仍然需要升级成 Agent 直接上报 + 独立鉴权，这是当前方案没变的已知限制）；`perf-rabbit/client/go.mod` 完全并入主 go.mod，退役独立 module
+- **Phase 4**：~~多用户数据隔离权限模型~~（产品已决定：不做隔离，见上面"好处"一节）；~~Agent/中心平台版本兼容检查~~（已完成：Agent 新增 `GET /api/agent/info` 上报 `common.AgentVersion`，前端 `probePerfAgent` 探测时一并拿版本号跟 `MIN_COMPATIBLE_AGENT_VERSION` 比较，不兼容则提示升级而不是"未检测到"；这两个版本号常量分别在 `perf-rabbit/client/common/version.go` 和 `web/src/api/perfAgent.ts`，以后改协议要同时改）；~~离线上报重试机制~~（已完成 browser-side 这一版：`web/src/utils/perfUploadQueue.ts` 用 localStorage 落一份待重传队列，采集停止拿到最终记录后先入队再尝试上报，上报成功才出队；页面加载时自动重试队列里积压的记录，也提供手动"重试上报"按钮。这解决的是"网络抖动/标签页被关掉又重开"这类同一浏览器内的场景，解决不了"反向思考"第 1 点里"换了台电脑/清了浏览器数据"这种更极端的丢失——如果以后判断这个风险不可接受，仍然需要升级成 Agent 直接上报 + 独立鉴权，这是当前方案没变的已知限制）；`perf-rabbit/client/go.mod` 完全并入主 go.mod，退役独立 module
 
 Phase 2 及之后每一块开工前，都会先写 spec 给你确认，再实现、再审查，跟这个仓库里其它功能的开发节奏一致。
