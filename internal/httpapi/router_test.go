@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -27,6 +29,7 @@ import (
 	"interface-load-test/internal/interfacestore"
 	"interface-load-test/internal/loadtest"
 	"interface-load-test/internal/logevent"
+	"interface-load-test/internal/perfstore"
 	"interface-load-test/internal/resultstore"
 	"interface-load-test/internal/scenario"
 	"interface-load-test/internal/scenariostore"
@@ -574,6 +577,232 @@ func TestListScenarios(t *testing.T) {
 	}
 }
 
+func TestCreatePerfTask(t *testing.T) {
+	deps := newHTTPTestDeps()
+	deps.perfTasks.createFunc = func(ctx context.Context, task *perfstore.PerfTask) error {
+		if task.UserID != "user-1" {
+			t.Fatalf("perf task user id = %q, want user-1 (from session, not request body)", task.UserID)
+		}
+		if task.DeviceID != "device-1" || task.Platform != "android" {
+			t.Fatalf("perf task fields = %#v", task.PerfTaskSummary)
+		}
+		if string(task.Samples) != `[{"cpu":1.2}]` {
+			t.Fatalf("perf task samples = %s", task.Samples)
+		}
+		task.ID = 1
+		task.CreatedAt = testHTTPTime()
+		return nil
+	}
+	router := NewRouter(deps.Dependencies())
+
+	body := `{"device_id":"device-1","package_name":"com.example.app","process_name":"com.example.app","platform":"android","status":"finished","sample_count":1,"samples":[{"cpu":1.2}]}`
+	resp := serveJSON(t, router, http.MethodPost, "/api/perf/tasks", body)
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusCreated, resp.Body.String())
+	}
+	got := decodeObject(t, resp.Body)
+	if got["id"] != float64(1) || got["user_id"] != "user-1" {
+		t.Fatalf("response identity = %#v", got)
+	}
+	if _, hasSamples := got["samples"]; hasSamples {
+		t.Fatalf("create response = %#v, should not echo samples back", got)
+	}
+}
+
+func TestCreatePerfTaskValidationError(t *testing.T) {
+	deps := newHTTPTestDeps()
+	deps.perfTasks.createFunc = func(context.Context, *perfstore.PerfTask) error {
+		return perfstore.ErrDeviceIDRequired
+	}
+	router := NewRouter(deps.Dependencies())
+
+	resp := serveJSON(t, router, http.MethodPost, "/api/perf/tasks", `{"platform":"android"}`)
+
+	assertErrorResponse(t, resp, http.StatusBadRequest, perfstore.ErrDeviceIDRequired.Error())
+}
+
+func TestListPerfTasksOmitsSamples(t *testing.T) {
+	deps := newHTTPTestDeps()
+	deps.perfTasks.items = []perfstore.PerfTaskSummary{
+		{ID: 1, UserID: "user-1", DeviceID: "device-1", Platform: "android", Status: "finished", CreatedAt: testHTTPTime()},
+	}
+	router := NewRouter(deps.Dependencies())
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, authenticatedRequest(http.MethodGet, "/api/perf/tasks", nil))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusOK, resp.Body.String())
+	}
+	var body []map[string]any
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if len(body) != 1 || body[0]["id"] != float64(1) {
+		t.Fatalf("perf task list response = %#v", body)
+	}
+	if _, hasSamples := body[0]["samples"]; hasSamples {
+		t.Fatalf("list response = %#v, should not include samples", body[0])
+	}
+
+	deps.perfTasks.items = nil
+	empty := httptest.NewRecorder()
+	router.ServeHTTP(empty, authenticatedRequest(http.MethodGet, "/api/perf/tasks", nil))
+	if empty.Code != http.StatusOK || strings.TrimSpace(empty.Body.String()) != "[]" {
+		t.Fatalf("empty perf tasks = status %d body %q, want 200 []", empty.Code, empty.Body.String())
+	}
+}
+
+func TestGetPerfTaskIncludesSamples(t *testing.T) {
+	deps := newHTTPTestDeps()
+	deps.perfTasks.items = []perfstore.PerfTaskSummary{
+		{ID: 1, UserID: "user-1", DeviceID: "device-1", Platform: "android", Status: "finished", CreatedAt: testHTTPTime()},
+	}
+	deps.perfTasks.samples = map[int64]json.RawMessage{1: json.RawMessage(`[{"cpu":1.2}]`)}
+	router := NewRouter(deps.Dependencies())
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, authenticatedRequest(http.MethodGet, "/api/perf/tasks/1", nil))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusOK, resp.Body.String())
+	}
+	got := decodeObject(t, resp.Body)
+	samples, ok := got["samples"].([]any)
+	if !ok || len(samples) != 1 {
+		t.Fatalf("samples = %#v, want one-element array", got["samples"])
+	}
+}
+
+func TestGetPerfTaskNotFound(t *testing.T) {
+	deps := newHTTPTestDeps()
+	router := NewRouter(deps.Dependencies())
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, authenticatedRequest(http.MethodGet, "/api/perf/tasks/999", nil))
+
+	assertErrorResponse(t, resp, http.StatusNotFound, perfstore.ErrNotFound.Error())
+}
+
+func TestGetPerfTaskInvalidID(t *testing.T) {
+	deps := newHTTPTestDeps()
+	router := NewRouter(deps.Dependencies())
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, authenticatedRequest(http.MethodGet, "/api/perf/tasks/not-a-number", nil))
+
+	assertErrorResponse(t, resp, http.StatusBadRequest, "invalid id")
+}
+
+func TestDeletePerfTask(t *testing.T) {
+	deps := newHTTPTestDeps()
+	var deletedID int64
+	deps.perfTasks.deleteFunc = func(ctx context.Context, id int64) error {
+		deletedID = id
+		return nil
+	}
+	router := NewRouter(deps.Dependencies())
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, authenticatedRequest(http.MethodDelete, "/api/perf/tasks/1", nil))
+	if resp.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusNoContent, resp.Body.String())
+	}
+	if deletedID != 1 {
+		t.Fatalf("deleted id = %d, want 1", deletedID)
+	}
+}
+
+func TestDeletePerfTaskNotFound(t *testing.T) {
+	deps := newHTTPTestDeps()
+	deps.perfTasks.deleteFunc = func(context.Context, int64) error {
+		return perfstore.ErrNotFound
+	}
+	router := NewRouter(deps.Dependencies())
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, authenticatedRequest(http.MethodDelete, "/api/perf/tasks/999", nil))
+
+	assertErrorResponse(t, resp, http.StatusNotFound, perfstore.ErrNotFound.Error())
+}
+
+func TestListPerfAgentDownloadsReportsAvailability(t *testing.T) {
+	deps := newHTTPTestDeps()
+	deps.perfAgentAssetsDir = t.TempDir()
+	if err := os.WriteFile(filepath.Join(deps.perfAgentAssetsDir, "perf-agent-darwin-arm64"), []byte("fake-binary"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	router := NewRouter(deps.Dependencies())
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, authenticatedRequest(http.MethodGet, "/api/perf/agent/downloads", nil))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusOK, resp.Body.String())
+	}
+
+	var options []perfAgentDownloadOption
+	if err := json.Unmarshal(resp.Body.Bytes(), &options); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if len(options) != len(perfAgentDownloads) {
+		t.Fatalf("len(options) = %d, want %d", len(options), len(perfAgentDownloads))
+	}
+
+	byFilename := make(map[string]bool)
+	for _, option := range options {
+		byFilename[option.Filename] = option.Available
+	}
+	if !byFilename["perf-agent-darwin-arm64"] {
+		t.Fatalf("options = %#v, want perf-agent-darwin-arm64 available", options)
+	}
+	if byFilename["perf-agent-windows-amd64.exe"] {
+		t.Fatalf("options = %#v, want perf-agent-windows-amd64.exe unavailable", options)
+	}
+}
+
+func TestDownloadPerfAgentServesFile(t *testing.T) {
+	deps := newHTTPTestDeps()
+	deps.perfAgentAssetsDir = t.TempDir()
+	if err := os.WriteFile(filepath.Join(deps.perfAgentAssetsDir, "perf-agent-darwin-arm64"), []byte("fake-binary"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	router := NewRouter(deps.Dependencies())
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, authenticatedRequest(http.MethodGet, "/api/perf/agent/downloads/perf-agent-darwin-arm64", nil))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusOK, resp.Body.String())
+	}
+	if resp.Body.String() != "fake-binary" {
+		t.Fatalf("body = %q, want %q", resp.Body.String(), "fake-binary")
+	}
+	if got := resp.Header().Get("Content-Disposition"); !strings.Contains(got, "perf-agent-darwin-arm64") {
+		t.Fatalf("Content-Disposition = %q, want it to reference the filename", got)
+	}
+}
+
+func TestDownloadPerfAgentRejectsUnknownFilename(t *testing.T) {
+	deps := newHTTPTestDeps()
+	deps.perfAgentAssetsDir = t.TempDir()
+	router := NewRouter(deps.Dependencies())
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, authenticatedRequest(http.MethodGet, "/api/perf/agent/downloads/..%2F..%2Fetc%2Fpasswd", nil))
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusNotFound, resp.Body.String())
+	}
+}
+
+func TestDownloadPerfAgentMissingFileReturnsNotFound(t *testing.T) {
+	deps := newHTTPTestDeps()
+	deps.perfAgentAssetsDir = t.TempDir()
+	router := NewRouter(deps.Dependencies())
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, authenticatedRequest(http.MethodGet, "/api/perf/agent/downloads/perf-agent-darwin-arm64", nil))
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusNotFound, resp.Body.String())
+	}
+}
+
 func TestCreateTaskFiltersDisabledAccounts(t *testing.T) {
 	deps := newHTTPTestDeps()
 	deps.accounts.listByGroupFunc = func(ctx context.Context, groupID string) ([]accountstore.Account, error) {
@@ -1018,6 +1247,11 @@ func TestCORS(t *testing.T) {
 	if got := options.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(got, "PUT") {
 		t.Fatalf("Access-Control-Allow-Methods = %q, want it to contain PUT", got)
 	}
+
+	// Same regression class: DELETE /api/perf/tasks/{id} is a real route too.
+	if got := options.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(got, "DELETE") {
+		t.Fatalf("Access-Control-Allow-Methods = %q, want it to contain DELETE", got)
+	}
 }
 
 func TestExportTask(t *testing.T) {
@@ -1244,16 +1478,18 @@ func TestTaskExistsFunc(t *testing.T) {
 }
 
 type httpTestDeps struct {
-	tasks          *fakeHTTPTaskManager
-	accounts       *fakeHTTPAccountStore
-	results        *fakeHTTPResultStore
-	interfaces     *fakeHTTPInterfaceStore
-	environments   *fakeHTTPEnvironmentStore
-	scenarios      *fakeHTTPScenarioStore
-	httpDoer       *fakeHTTPDoer
-	authStore      *fakeHTTPAuthStore
-	hub            *logevent.Hub
-	allowedOrigins []string
+	tasks              *fakeHTTPTaskManager
+	accounts           *fakeHTTPAccountStore
+	results            *fakeHTTPResultStore
+	interfaces         *fakeHTTPInterfaceStore
+	environments       *fakeHTTPEnvironmentStore
+	scenarios          *fakeHTTPScenarioStore
+	perfTasks          *fakeHTTPPerfStore
+	httpDoer           *fakeHTTPDoer
+	authStore          *fakeHTTPAuthStore
+	hub                *logevent.Hub
+	allowedOrigins     []string
+	perfAgentAssetsDir string
 }
 
 func newHTTPTestDeps() *httpTestDeps {
@@ -1277,6 +1513,7 @@ func newHTTPTestDeps() *httpTestDeps {
 		interfaces:   &fakeHTTPInterfaceStore{},
 		environments: &fakeHTTPEnvironmentStore{},
 		scenarios:    &fakeHTTPScenarioStore{},
+		perfTasks:    &fakeHTTPPerfStore{},
 		httpDoer:     &fakeHTTPDoer{},
 		authStore:    authStore,
 		hub:          logevent.NewHub(),
@@ -1285,16 +1522,18 @@ func newHTTPTestDeps() *httpTestDeps {
 
 func (d *httpTestDeps) Dependencies() Dependencies {
 	return Dependencies{
-		TaskManager:      d.tasks,
-		AccountStore:     d.accounts,
-		ResultStore:      d.results,
-		InterfaceStore:   d.interfaces,
-		EnvironmentStore: d.environments,
-		ScenarioStore:    d.scenarios,
-		HTTPDoer:         d.httpDoer,
-		AuthService:      auth.NewService(d.authStore),
-		Hub:              d.hub,
-		AllowedOrigins:   d.allowedOrigins,
+		TaskManager:        d.tasks,
+		AccountStore:       d.accounts,
+		ResultStore:        d.results,
+		InterfaceStore:     d.interfaces,
+		EnvironmentStore:   d.environments,
+		ScenarioStore:      d.scenarios,
+		PerfStore:          d.perfTasks,
+		PerfAgentAssetsDir: d.perfAgentAssetsDir,
+		HTTPDoer:           d.httpDoer,
+		AuthService:        auth.NewService(d.authStore),
+		Hub:                d.hub,
+		AllowedOrigins:     d.allowedOrigins,
 	}
 }
 
@@ -1671,6 +1910,53 @@ func (s *fakeHTTPEnvironmentStore) Update(ctx context.Context, env *environments
 	}
 	if env.DefaultHeaders == nil {
 		env.DefaultHeaders = map[string]string{}
+	}
+	return nil
+}
+
+type fakeHTTPPerfStore struct {
+	items      []perfstore.PerfTaskSummary
+	samples    map[int64]json.RawMessage
+	createFunc func(context.Context, *perfstore.PerfTask) error
+	getFunc    func(context.Context, int64) (*perfstore.PerfTask, error)
+	listFunc   func(context.Context) ([]perfstore.PerfTaskSummary, error)
+	deleteFunc func(context.Context, int64) error
+}
+
+func (s *fakeHTTPPerfStore) Create(ctx context.Context, task *perfstore.PerfTask) error {
+	if s.createFunc != nil {
+		return s.createFunc(ctx, task)
+	}
+	task.ID = 1
+	task.CreatedAt = testHTTPTime()
+	return nil
+}
+
+func (s *fakeHTTPPerfStore) Get(ctx context.Context, id int64) (*perfstore.PerfTask, error) {
+	if s.getFunc != nil {
+		return s.getFunc(ctx, id)
+	}
+	for _, summary := range s.items {
+		if summary.ID == id {
+			return &perfstore.PerfTask{PerfTaskSummary: summary, Samples: s.samples[id]}, nil
+		}
+	}
+	return nil, perfstore.ErrNotFound
+}
+
+func (s *fakeHTTPPerfStore) List(ctx context.Context) ([]perfstore.PerfTaskSummary, error) {
+	if s.listFunc != nil {
+		return s.listFunc(ctx)
+	}
+	if s.items == nil {
+		return []perfstore.PerfTaskSummary{}, nil
+	}
+	return s.items, nil
+}
+
+func (s *fakeHTTPPerfStore) Delete(ctx context.Context, id int64) error {
+	if s.deleteFunc != nil {
+		return s.deleteFunc(ctx, id)
 	}
 	return nil
 }

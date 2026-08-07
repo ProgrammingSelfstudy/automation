@@ -1,5 +1,12 @@
 .env
+.env.*
 bin/
 .idea/
 .claude/
 .DS_Store
+
+# client（本地采集 Agent）：本地测试时落盘的采集历史，是运行时产物，不入库
+client/data/
+
+# 中心平台下载入口用的 Agent 二进制，make perf-agent-build 生成，不入库
+assets/perf-agent/

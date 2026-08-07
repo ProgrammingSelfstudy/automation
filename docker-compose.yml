@@ -20,6 +20,7 @@ services:
       - ./internal/authstore/schema.sql:/docker-entrypoint-initdb.d/05-user.sql:ro
       - ./internal/interfacestore/schema.sql:/docker-entrypoint-initdb.d/06-api_interface.sql:ro
       - ./internal/environmentstore/schema.sql:/docker-entrypoint-initdb.d/07-environment.sql:ro
+      - ./internal/perfstore/schema.sql:/docker-entrypoint-initdb.d/08-perf_task.sql:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-devpassword}"]
       interval: 5s

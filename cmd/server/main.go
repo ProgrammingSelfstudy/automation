@@ -20,6 +20,7 @@ import (
 	"interface-load-test/internal/interfacestore"
 	"interface-load-test/internal/loadtest"
 	"interface-load-test/internal/logevent"
+	"interface-load-test/internal/perfstore"
 	"interface-load-test/internal/resultstore"
 	"interface-load-test/internal/scenario"
 	"interface-load-test/internal/scenariostore"
@@ -67,6 +68,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("create auth store: %v", err)
 	}
+	perfStore, err := perfstore.NewMySQLStore(dsn)
+	if err != nil {
+		log.Fatalf("create perf store: %v", err)
+	}
 	authService := auth.NewService(authStore)
 	bootstrapAdmin(context.Background(), authStore, authService)
 	httpDoer := scenario.NewHTTPClient(0)
@@ -77,17 +82,19 @@ func main() {
 	manager := taskmanager.NewManager(taskStore, registry)
 
 	router := httpapi.NewRouter(httpapi.Dependencies{
-		TaskManager:      manager,
-		AccountStore:     accountStore,
-		ResultStore:      resultStore,
-		InterfaceStore:   interfaceStore,
-		EnvironmentStore: environmentStore,
-		ScenarioStore:    scenarioStore,
-		HTTPDoer:         httpDoer,
-		AuthService:      authService,
-		Hub:              hub,
-		AllowedOrigins:   csvEnvOrDefault("ALLOWED_ORIGINS", "http://localhost:5173"),
-		CookieSecure:     boolEnv("COOKIE_SECURE", false),
+		TaskManager:        manager,
+		AccountStore:       accountStore,
+		ResultStore:        resultStore,
+		InterfaceStore:     interfaceStore,
+		EnvironmentStore:   environmentStore,
+		ScenarioStore:      scenarioStore,
+		PerfStore:          perfStore,
+		PerfAgentAssetsDir: envOrDefault("PERF_AGENT_ASSETS_DIR", "./assets/perf-agent"),
+		HTTPDoer:           httpDoer,
+		AuthService:        authService,
+		Hub:                hub,
+		AllowedOrigins:     csvEnvOrDefault("ALLOWED_ORIGINS", "http://localhost:5173"),
+		CookieSecure:       boolEnv("COOKIE_SECURE", false),
 	})
 
 	addr := envOrDefault("LISTEN_ADDR", ":8080")

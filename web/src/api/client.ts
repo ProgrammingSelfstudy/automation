@@ -98,6 +98,44 @@ export type AccountResponse = {
   created_at: string
 }
 
+export type PerfTaskStatus = 'collecting' | 'stopped' | 'interrupted' | 'error' | string
+
+export type PerfTaskSummaryResponse = {
+  id: number
+  user_id: string
+  device_id: string
+  package_name: string
+  process_name: string
+  platform: string
+  device_model?: string
+  status: PerfTaskStatus
+  start_time: string
+  stop_time: string
+  sample_interval_ms: number
+  sample_count: number
+  last_error?: string
+  created_at: string
+}
+
+export type PerfTaskResponse = PerfTaskSummaryResponse & {
+  samples: unknown
+}
+
+export type CreatePerfTaskRequest = {
+  device_id: string
+  package_name: string
+  process_name: string
+  platform: string
+  device_model?: string
+  status: string
+  start_time: string
+  stop_time: string
+  sample_interval_ms: number
+  sample_count: number
+  last_error?: string
+  samples: unknown
+}
+
 export type CreateAccountRequest = {
   group_id: string
   username: string
@@ -317,6 +355,42 @@ export function createScenario(payload: { name: string; definition: Scenario }) 
     method: 'POST',
     body: JSON.stringify(payload),
   })
+}
+
+export function listPerfTasks() {
+  return request<PerfTaskSummaryResponse[]>('/api/perf/tasks')
+}
+
+export function getPerfTask(id: number) {
+  return request<PerfTaskResponse>(`/api/perf/tasks/${id}`)
+}
+
+export function createPerfTask(payload: CreatePerfTaskRequest) {
+  return request<PerfTaskSummaryResponse>('/api/perf/tasks', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function deletePerfTask(id: number) {
+  return request<void>(`/api/perf/tasks/${id}`, {
+    method: 'DELETE',
+  })
+}
+
+export type PerfAgentDownloadOption = {
+  platform: string
+  label: string
+  filename: string
+  available: boolean
+}
+
+export function listPerfAgentDownloads() {
+  return request<PerfAgentDownloadOption[]>('/api/perf/agent/downloads')
+}
+
+export function perfAgentDownloadURL(filename: string) {
+  return `${API_BASE_URL}/api/perf/agent/downloads/${encodeURIComponent(filename)}`
 }
 
 export function login(payload: {
