@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronRight,
   FileCode2,
+  Gauge,
   Globe2,
   KeyRound,
   ListChecks,
@@ -24,19 +25,31 @@ import AccountsPage from './pages/AccountsPage'
 import CreateTaskPage from './pages/CreateTaskPage'
 import InterfacesPage from './pages/InterfacesPage'
 import LoginPage from './pages/LoginPage'
+import PerfTestPage from './pages/PerfTestPage'
 import ScenariosPage from './pages/ScenariosPage'
 import TaskDetailPage from './pages/TaskDetailPage'
 import TaskListPage from './pages/TaskListPage'
 import { getErrorMessage } from './utils/format'
 
-const navItems = [
-  { to: '/interfaces', label: '接口', icon: FileCode2 },
-  { to: '/scenarios', label: '场景列表', icon: BookOpen },
+const moduleSections = [
   {
-    to: '/runs',
-    label: '运行记录',
-    icon: ListChecks,
-    match: (pathname: string) => pathname === '/runs' || pathname.startsWith('/tasks/'),
+    key: 'interface-test',
+    title: '接口测试',
+    items: [
+      { to: '/interfaces', label: '接口', icon: FileCode2 },
+      { to: '/scenarios', label: '场景列表', icon: BookOpen },
+      {
+        to: '/runs',
+        label: '运行记录',
+        icon: ListChecks,
+        match: (pathname: string) => pathname === '/runs' || pathname.startsWith('/tasks/'),
+      },
+    ],
+  },
+  {
+    key: 'perf-test',
+    title: '性能测试',
+    items: [{ to: '/perf', label: '性能采集', icon: Gauge }],
   },
 ]
 
@@ -48,7 +61,9 @@ export default function App() {
   const [backupPassword, setBackupPassword] = useState('')
   const [newBackupCodes, setNewBackupCodes] = useState<string[]>([])
   const [backupError, setBackupError] = useState('')
-  const [moduleExpanded, setModuleExpanded] = useState(true)
+  const [expandedModules, setExpandedModules] = useState<Record<string, boolean>>(
+    Object.fromEntries(moduleSections.map((section) => [section.key, true])),
+  )
   const [environmentModalOpen, setEnvironmentModalOpen] = useState(false)
   const [globalVariablesModalOpen, setGlobalVariablesModalOpen] = useState(false)
 
@@ -170,48 +185,57 @@ export default function App() {
       </header>
 
       <div className="grid w-full gap-5 px-4 py-5 sm:px-6 lg:grid-cols-[260px_minmax(0,1fr)] lg:px-8">
-        <aside className="glass-panel h-fit p-3 lg:sticky lg:top-20">
-          <div className="mb-2 flex items-center justify-between px-2 py-2">
-            <div>
-              <div className="text-xs font-semibold text-slate-500">模块</div>
-              <div className="mt-1 text-base font-semibold text-slate-950">接口测试</div>
-            </div>
-            <button
-              aria-expanded={moduleExpanded}
-              aria-label={moduleExpanded ? '收起接口测试模块' : '展开接口测试模块'}
-              className="flex h-8 w-8 items-center justify-center rounded-full border border-cyan-200/70 bg-cyan-50/80 text-cyan-600"
-              type="button"
-              onClick={() => setModuleExpanded((value) => !value)}
-            >
-              {moduleExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-            </button>
-          </div>
-
-          {moduleExpanded ? (
-            <nav className="space-y-2">
-              {navItems.map((item) => {
-                const Icon = item.icon
-                return (
-                  <NavLink
-                    className={({ isActive }) =>
-                      [
-                        'flex h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium transition',
-                        isActive || item.match?.(location.pathname)
-                          ? 'bg-gradient-to-r from-blue-600 to-cyan-500 text-white shadow-lg shadow-blue-500/20'
-                          : 'text-slate-600 hover:bg-white/70 hover:text-blue-700',
-                      ].join(' ')
+        <aside className="glass-panel h-fit space-y-4 p-3 lg:sticky lg:top-20">
+          {moduleSections.map((section) => {
+            const expanded = expandedModules[section.key] ?? true
+            return (
+              <div key={section.key}>
+                <div className="mb-2 flex items-center justify-between px-2 py-2">
+                  <div>
+                    <div className="text-xs font-semibold text-slate-500">模块</div>
+                    <div className="mt-1 text-base font-semibold text-slate-950">{section.title}</div>
+                  </div>
+                  <button
+                    aria-expanded={expanded}
+                    aria-label={expanded ? `收起${section.title}模块` : `展开${section.title}模块`}
+                    className="flex h-8 w-8 items-center justify-center rounded-full border border-cyan-200/70 bg-cyan-50/80 text-cyan-600"
+                    type="button"
+                    onClick={() =>
+                      setExpandedModules((current) => ({ ...current, [section.key]: !expanded }))
                     }
-                    end={item.to === '/runs'}
-                    key={item.to}
-                    to={item.to}
                   >
-                    <Icon size={16} />
-                    {item.label}
-                  </NavLink>
-                )
-              })}
-            </nav>
-          ) : null}
+                    {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                  </button>
+                </div>
+
+                {expanded ? (
+                  <nav className="space-y-2">
+                    {section.items.map((item) => {
+                      const Icon = item.icon
+                      return (
+                        <NavLink
+                          className={({ isActive }) =>
+                            [
+                              'flex h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium transition',
+                              isActive || item.match?.(location.pathname)
+                                ? 'bg-gradient-to-r from-blue-600 to-cyan-500 text-white shadow-lg shadow-blue-500/20'
+                                : 'text-slate-600 hover:bg-white/70 hover:text-blue-700',
+                            ].join(' ')
+                          }
+                          end={item.to === '/runs'}
+                          key={item.to}
+                          to={item.to}
+                        >
+                          <Icon size={16} />
+                          {item.label}
+                        </NavLink>
+                      )
+                    })}
+                  </nav>
+                ) : null}
+              </div>
+            )
+          })}
         </aside>
 
         <main className="min-w-0">
@@ -223,6 +247,7 @@ export default function App() {
             <Route element={<TaskListPage />} path="/runs" />
             <Route element={<CreateTaskPage />} path="/tasks/new" />
             <Route element={<TaskDetailPage />} path="/tasks/:id" />
+            <Route element={<PerfTestPage />} path="/perf" />
             <Route element={<Navigate replace to="/interfaces" />} path="*" />
           </Routes>
         </main>

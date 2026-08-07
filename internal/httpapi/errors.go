@@ -13,6 +13,7 @@ import (
 	"interface-load-test/internal/export"
 	"interface-load-test/internal/interfacestore"
 	"interface-load-test/internal/loadtest"
+	"interface-load-test/internal/perfstore"
 	"interface-load-test/internal/scenariostore"
 	"interface-load-test/internal/taskmanager"
 )
@@ -26,6 +27,7 @@ func classifyError(err error) (status int, message string) {
 		errors.Is(err, environmentstore.ErrNotFound),
 		errors.Is(err, interfacestore.ErrNotFound),
 		errors.Is(err, scenariostore.ErrNotFound),
+		errors.Is(err, perfstore.ErrNotFound),
 		errors.Is(err, export.ErrNoResults):
 		return http.StatusNotFound, err.Error()
 	case errors.Is(err, auth.ErrInvalidCredentials),
@@ -52,6 +54,8 @@ func classifyError(err error) (status int, message string) {
 		errors.Is(err, interfacestore.ErrURLRequired),
 		errors.Is(err, scenariostore.ErrNameRequired),
 		errors.Is(err, scenariostore.ErrStepsRequired),
+		errors.Is(err, perfstore.ErrUserIDRequired),
+		errors.Is(err, perfstore.ErrDeviceIDRequired),
 		errors.Is(err, authstore.ErrUsernameTaken),
 		errors.Is(err, auth.ErrWeakPassword),
 		errors.Is(err, auth.ErrTOTPAlreadyEnabled),

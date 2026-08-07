@@ -10,6 +10,7 @@ import (
 	"interface-load-test/internal/environmentstore"
 	"interface-load-test/internal/interfacestore"
 	"interface-load-test/internal/logevent"
+	"interface-load-test/internal/perfstore"
 	"interface-load-test/internal/resultstore"
 	"interface-load-test/internal/scenario"
 	"interface-load-test/internal/scenariostore"
@@ -33,17 +34,19 @@ type ResultStore interface {
 
 // Dependencies contains HTTP handler dependencies.
 type Dependencies struct {
-	TaskManager      TaskManager
-	AccountStore     accountstore.Store
-	ResultStore      ResultStore
-	InterfaceStore   interfacestore.Store
-	EnvironmentStore environmentstore.Store
-	ScenarioStore    scenariostore.Store
-	HTTPDoer         scenario.HTTPDoer
-	AuthService      *auth.Service
-	Hub              *logevent.Hub
-	AllowedOrigins   []string
-	CookieSecure     bool
+	TaskManager        TaskManager
+	AccountStore       accountstore.Store
+	ResultStore        ResultStore
+	InterfaceStore     interfacestore.Store
+	EnvironmentStore   environmentstore.Store
+	ScenarioStore      scenariostore.Store
+	PerfStore          perfstore.Store
+	PerfAgentAssetsDir string
+	HTTPDoer           scenario.HTTPDoer
+	AuthService        *auth.Service
+	Hub                *logevent.Hub
+	AllowedOrigins     []string
+	CookieSecure       bool
 }
 
 type handler struct {
@@ -74,6 +77,12 @@ func NewRouter(deps Dependencies) http.Handler {
 	mux.HandleFunc("PUT /api/environments/{id}", requireAuth(deps.AuthService, h.updateEnvironment))
 	mux.HandleFunc("POST /api/scenarios", requireAuth(deps.AuthService, h.createScenario))
 	mux.HandleFunc("GET /api/scenarios", requireAuth(deps.AuthService, h.listScenarios))
+	mux.HandleFunc("POST /api/perf/tasks", requireAuth(deps.AuthService, h.createPerfTask))
+	mux.HandleFunc("GET /api/perf/tasks", requireAuth(deps.AuthService, h.listPerfTasks))
+	mux.HandleFunc("GET /api/perf/tasks/{id}", requireAuth(deps.AuthService, h.getPerfTask))
+	mux.HandleFunc("DELETE /api/perf/tasks/{id}", requireAuth(deps.AuthService, h.deletePerfTask))
+	mux.HandleFunc("GET /api/perf/agent/downloads", requireAuth(deps.AuthService, h.listPerfAgentDownloads))
+	mux.HandleFunc("GET /api/perf/agent/downloads/{filename}", requireAuth(deps.AuthService, h.downloadPerfAgent))
 	mux.HandleFunc("POST /api/tasks", requireAuth(deps.AuthService, h.createTask))
 	mux.HandleFunc("GET /api/tasks", requireAuth(deps.AuthService, h.listTasks))
 	mux.HandleFunc("GET /api/tasks/{id}", requireAuth(deps.AuthService, h.getTask))

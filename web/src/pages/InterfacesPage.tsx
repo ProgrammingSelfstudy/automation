@@ -145,15 +145,25 @@ export default function InterfacesPage() {
     // no "global" scope), so it has to be resolved here before sending no
     // matter what. {{.env.X}} is deliberately left untouched — the backend
     // still resolves those itself via environment_id, same as before.
-    // Global headers (Authorization/deviceId/os/... shared across every
-    // interface) apply as a base layer — the interface's own headers win on
-    // key collision, same override rule as environment default headers.
+    //
+    // Header precedence, lowest to highest: global headers < environment's
+    // default headers < the interface's own headers. Merging all three here
+    // (not just global+interface) matters — without the environment layer in
+    // this same pass, a key set in both global headers and the environment's
+    // defaults would have the global value baked into what's sent to the
+    // backend, and the backend's own env-default merge (env defaults as base,
+    // already-baked-in headers as override) would then let that global value
+    // incorrectly beat the environment default.
+    const envDefaultHeaders = environments.find((env) => env.id === previewEnvironmentID)?.default_headers ?? {}
     const globalOnlyScopes: TemplateScopes = { env: {}, global: globalScope() }
     let stepPayload: ScenarioStep = {
       ...stepToSend,
       url: resolveEnvRefs(stepToSend.url, globalOnlyScopes),
       body_tpl: resolveEnvRefs(stepToSend.body_tpl, globalOnlyScopes),
-      headers: resolveEnvRecord({ ...loadGlobalHeaders(), ...stepToSend.headers }, globalOnlyScopes),
+      headers: resolveEnvRecord(
+        { ...loadGlobalHeaders(), ...envDefaultHeaders, ...stepToSend.headers },
+        globalOnlyScopes,
+      ),
     }
 
     // X-Timestamp/X-Nonce are always generated fresh at send time, signing
@@ -384,7 +394,12 @@ function InterfaceDetail({
     ...item.step,
     url: resolveRequestURL(resolveEnvRefs(item.step.url, previewScopes), previewEnvironment?.variables.BASE_URL ?? ''),
     body_tpl: resolveEnvRefs(item.step.body_tpl, previewScopes),
-    headers: resolveEnvRecord({ ...loadGlobalHeaders(), ...item.step.headers }, previewScopes),
+    // Same three-layer precedence as the actual send: global < environment
+    // default headers < the interface's own headers.
+    headers: resolveEnvRecord(
+      { ...loadGlobalHeaders(), ...(previewEnvironment?.default_headers ?? {}), ...item.step.headers },
+      previewScopes,
+    ),
   }
 
   return (

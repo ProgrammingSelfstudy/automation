@@ -47,13 +47,9 @@ source /etc/profile.d/go.sh
 go version   # 应该打印 go1.25.10
 ```
 
-## 3. 安装 Node.js（编译前端用）
+## 3. 前端不在这台服务器上编译
 
-```bash
-curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
-yum install -y nodejs
-node --version   # 20.x 即可，本地开发用的是 22.x，20 LTS 编译这个项目没问题
-```
+CentOS 7.6 的 glibc 停在 2.17（升级系统 glibc 风险极高，等于动摇整个系统的根基，不要在生产机上尝试），而 Node.js 20/22 官方包要求 glibc >= 2.28，`yum install nodejs` 装最新版会直接报 `glibc >= 2.28` 依赖错误；这个项目用的 Vite 8 本身也要求 Node `^20.19.0 || >=22.12.0`，就算折腾出一个能装的老版本 Node，也编译不了这个前端。CentOS 7 上没有干净的办法解决——跳过在这台机器上装 Node，改成第 12 步"在别的机器上编译好、把产物传上来"。
 
 ## 4. 安装 MySQL 8.0
 
@@ -61,6 +57,13 @@ CentOS 7 默认装的是 MariaDB，`internal/environmentstore` 这张表用了 `
 
 ```bash
 yum install -y https://dev.mysql.com/get/mysql80-community-release-el7-9.noarch.rpm
+
+# repo 包里带的签名密钥可能是旧的，MySQL 官方会不定期轮换签名密钥，装的时候如果
+# 报 "GPG keys ... are already installed but they are not correct for this
+# package" / "key ID xxxxxxxx: NOKEY"，去 https://repo.mysql.com/ 找当前最新的
+# RPM-GPG-KEY-mysql-20xx 手动导入一下（下面这条截至写这份文档时是最新的）：
+rpm --import https://repo.mysql.com/RPM-GPG-KEY-mysql-2025
+
 yum install -y mysql-community-server
 systemctl enable mysqld --now
 
@@ -119,6 +122,7 @@ for f in \
   internal/authstore/schema.sql \
   internal/interfacestore/schema.sql \
   internal/environmentstore/schema.sql \
+  internal/perfstore/schema.sql \
 ; do
   echo "applying $f"
   mysql -uloadtest -p loadtest < "$f"
@@ -163,6 +167,10 @@ COOKIE_SECURE=false
 
 HTTP_SHUTDOWN_TIMEOUT=10s
 TASK_SHUTDOWN_TIMEOUT=30s
+
+# 本地采集 Agent 二进制存放目录，见第 12.5 步。相对路径是相对进程工作目录
+# （systemd unit 里配的 WorkingDirectory），不确定就写绝对路径。
+PERF_AGENT_ASSETS_DIR=/opt/interface-load-test/assets/perf-agent
 ```
 
 ```bash
@@ -238,18 +246,17 @@ tail -f /var/log/interface-load-test/server.log
 
 用 `copytruncate` 而不是默认的 move+create：后端进程通过 bash 重定向一直拿着这个文件的文件描述符在写，普通 logrotate 把文件移走再建一个新的，后端进程不会自动重新打开新文件（这个服务没实现收到信号后重开日志文件），会继续写在那个已经被移走、只是还没被回收的旧文件里，新文件永远是空的。`copytruncate` 是复制一份出来再把原文件截断清零，同一个 fd 继续写不受影响，最省事。
 
-## 12. 编译前端、配置 nginx
+## 12. 编译前端（本地机器）、上传产物、配置 nginx
 
 ```bash
 yum install -y nginx
 systemctl enable nginx --now
 ```
 
-编译前端：
+前端在**你自己的电脑**（本地开发用的那台，Node 版本够新）上编译，不在 CentOS 服务器上编译（原因见第 3 步）：
 
 ```bash
-su - interface-load-test -s /bin/bash
-cd /opt/interface-load-test/app/web
+cd /Users/mountainwalkeralliance/Documents/code/automation/web
 cp .env.example .env
 vi .env
 ```
@@ -260,13 +267,26 @@ vi .env
 VITE_API_BASE_URL=https://your-domain.com:9527
 ```
 
-（还没上 HTTPS 就先写 `http://your-domain.com:9527` 或者 `http://服务器公网IP:9527`，等第 13 步配完证书后回来改成 https 再重新 `npm run build` 一次）
+（还没上 HTTPS 就先写 `http://your-domain.com:9527` 或者 `http://服务器公网IP:9527`，等第 13 步配完证书后回来改成 https，在本地重新 `npm run build`、再传一次）
 
 ```bash
 npm install
-npm run build   # 产物在 web/dist
-exit
+npm run build   # 产物在 web/dist，是一堆静态文件，不需要 Node 环境就能跑
 ```
+
+把 `dist` 整个目录传到服务器（在你本地电脑上执行，`server-ip` 换成实际地址）：
+
+```bash
+scp -r dist root@server-ip:/opt/interface-load-test/app/web/dist
+```
+
+回到服务器上把目录权限交还给应用用户（不影响 nginx 读取，只是保持跟这个目录下其它文件一致）：
+
+```bash
+chown -R interface-load-test:interface-load-test /opt/interface-load-test/app/web/dist
+```
+
+以后代码有更新，重复这几步：本地 `git pull`（或者直接改动后）→ `npm run build` → `scp -r dist root@server-ip:/opt/interface-load-test/app/web/dist` 覆盖过去即可，不用碰服务器上的 Node 环境（因为压根没有）。
 
 nginx 配置 `/etc/nginx/conf.d/interface-load-test.conf`：
 
@@ -315,6 +335,27 @@ systemctl reload nginx
 用的是非标准端口 9527，不是 80/443，浏览器访问要带上端口：`http://your-domain.com:9527`（配完 HTTPS 之后是 `https://your-domain.com:9527`）——不写端口默认走的是 80/443，会连不上。
 
 前端日志就是 `/var/log/nginx/interface-load-test.access.log`（每一次请求，包括页面加载和所有 `/api`、`/ws` 转发过去之前经过 nginx 这一层的记录）和 `interface-load-test.error.log`（nginx 自己的报错，比如后端连不上）——CentOS 的 nginx 包自带了 `/etc/logrotate.d/nginx`，会自动做日志切割，不用再额外配置。
+
+## 12.5 编译本地采集 Agent（本地机器）、上传产物
+
+"性能测试"模块的下载入口需要 Agent 二进制文件本身，跟前端一样在**你自己的电脑**上交叉编译，不在服务器上编译（服务器上编译出来是 Linux 版，用户下载下来在自己的 Mac/Windows 上跑不了）：
+
+```bash
+cd /Users/mountainwalkeralliance/Documents/code/automation
+make perf-agent-build   # 产物在 assets/perf-agent/，三个平台各一个可执行文件
+```
+
+传到服务器（`server-ip` 换成实际地址，目录跟第 8 步 `.env` 里 `PERF_AGENT_ASSETS_DIR` 配的路径对应）：
+
+```bash
+ssh root@server-ip mkdir -p /opt/interface-load-test/assets/perf-agent
+scp assets/perf-agent/* root@server-ip:/opt/interface-load-test/assets/perf-agent/
+ssh root@server-ip chown -R interface-load-test:interface-load-test /opt/interface-load-test/assets
+```
+
+不用重启后端服务——下载接口是每次请求时才 `os.Stat` 检查文件在不在，新传上去的文件立刻生效。在页面"性能测试"模块的"未检测到本地采集工具"提示里点一下下载按钮确认能下载。
+
+以后 perf-rabbit 代码有更新，重复这两步：本地 `make perf-agent-build` → `scp` 覆盖过去即可。
 
 ## 13.（可选）HTTPS
 
@@ -376,7 +417,7 @@ nginx -t && systemctl reload nginx
 配完之后回去做两件事：
 
 1. `.env` 里 `COOKIE_SECURE` 改成 `true`，`systemctl restart interface-load-test`
-2. `web/.env` 里 `VITE_API_BASE_URL` 改成 `https://` 开头，重新 `npm run build` 一次
+2. 回到**本地电脑**，`web/.env` 里 `VITE_API_BASE_URL` 改成 `https://` 开头，重新 `npm run build`，再 `scp -r dist` 传一次覆盖过去（跟第 12 步、更新部署那节是同一套流程）
 
 ## 14. 防火墙
 
@@ -403,14 +444,19 @@ nginx -t && systemctl reload nginx
 tail -f /var/log/nginx/interface-load-test.access.log
 tail -f /var/log/nginx/interface-load-test.error.log
 
-# 更新部署（代码有更新之后）
+# 更新部署 - 后端（在服务器上）
 su - interface-load-test -s /bin/bash
 cd /opt/interface-load-test/app
 git pull
 go build -o /opt/interface-load-test/bin/server ./cmd/server
-cd web && npm install && npm run build
 exit
 systemctl restart interface-load-test
+
+# 更新部署 - 前端（在你本地电脑上，服务器没有 Node 环境，见第 3/12 步）
+cd web && npm run build
+scp -r dist root@server-ip:/opt/interface-load-test/app/web/dist
+# 回到服务器上：
+ssh root@server-ip 'chown -R interface-load-test:interface-load-test /opt/interface-load-test/app/web/dist'
 # 前端是静态文件，nginx 直接读新的 web/dist，不用重启 nginx；如果改了 schema.sql 记得手动执行新增的建表/改表语句
 ```
 
