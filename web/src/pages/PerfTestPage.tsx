@@ -72,6 +72,10 @@ export default function PerfTestPage() {
   const [detailID, setDetailID] = useState<number | null>(null)
   const [pendingUploads, setPendingUploads] = useState<QueuedPerfUpload[]>(() => loadQueuedPerfUploads())
   const [retryingUploads, setRetryingUploads] = useState(false)
+  // 历史数据存在中心平台 MySQL 里，跟本地有没有装 Agent 无关——这两个
+  // 二级标签分开是为了让"历史数据"在没装/没启动 Agent 时也能看，不能让
+  // 整个页面卡死在"未检测到本地采集工具"上（之前的问题）。
+  const [activeTab, setActiveTab] = useState<'collect' | 'history'>('collect')
 
   async function probe() {
     setProbing(true)
@@ -274,243 +278,266 @@ export default function PerfTestPage() {
       </div>
     ) : null
 
-  if (agentStatus !== 'ready') {
-    const heading =
-      agentStatus === 'checking'
-        ? '正在检测本地采集工具…'
-        : agentStatus === 'incompatible'
-          ? '本地采集工具版本过旧，请升级'
-          : '未检测到本地采集工具'
+  const agentGateHeading =
+    agentStatus === 'checking'
+      ? '正在检测本地采集工具…'
+      : agentStatus === 'incompatible'
+        ? '本地采集工具版本过旧，请升级'
+        : '未检测到本地采集工具'
 
-    const description =
-      agentStatus === 'incompatible' ? (
-        <>
-          当前本地 Agent 版本是 <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">{agentVersion}</code>
-          ，低于这版页面要求的最低版本{' '}
-          <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">{MIN_COMPATIBLE_AGENT_VERSION}</code>
-          ，部分接口字段可能对不上。请退出旧版 Agent，下载安装下面的新版本后重新启动。
-        </>
-      ) : (
-        <>
-          性能测试需要在你自己的电脑上运行本地采集 Agent（perf-rabbit），浏览器通过{' '}
-          <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">127.0.0.1:9527</code>{' '}
-          与它通信来控制手机采集。请先启动 Agent；Android 设备还需要本机装好 adb 并加入 PATH，
-          iOS 设备需要本机预装 Python 3.8+。
-        </>
-      )
-
-    return (
-      <div className="page-shell">
-        {pendingUploadsBanner}
-        <section className="panel panel-body flex flex-col items-center gap-4 py-12 text-center">
-          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-amber-50 text-amber-600 ring-1 ring-amber-200">
-            <AlertTriangle size={26} />
-          </div>
-          <div>
-            <h2 className="text-base font-semibold text-slate-950">{heading}</h2>
-            <p className="mt-2 max-w-md text-sm text-slate-500">{description}</p>
-          </div>
-          <button className="btn btn-secondary" disabled={probing} type="button" onClick={probe}>
-            <RefreshCw size={16} className={probing ? 'animate-spin' : ''} />
-            重新检测
-          </button>
-
-          {agentStatus === 'unreachable' || agentStatus === 'incompatible' ? (
-            <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
-              {(agentDownloadsQuery.data ?? []).map((option) => (
-                <a
-                  className={`btn ${option.available ? 'btn-primary' : 'btn-secondary pointer-events-none opacity-50'}`}
-                  download
-                  href={option.available ? perfAgentDownloadURL(option.filename) : undefined}
-                  key={option.platform}
-                >
-                  <Download size={16} />
-                  {option.label}
-                  {!option.available ? '（暂未提供）' : ''}
-                </a>
-              ))}
-            </div>
-          ) : null}
-        </section>
-      </div>
+  const agentGateDescription =
+    agentStatus === 'incompatible' ? (
+      <>
+        当前本地 Agent 版本是 <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">{agentVersion}</code>
+        ，低于这版页面要求的最低版本{' '}
+        <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">{MIN_COMPATIBLE_AGENT_VERSION}</code>
+        ，部分接口字段可能对不上。请退出旧版 Agent，下载安装下面的新版本后重新启动。
+      </>
+    ) : (
+      <>
+        性能测试需要在你自己的电脑上运行本地采集 Agent（perf-rabbit），浏览器通过{' '}
+        <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">127.0.0.1:9527</code>{' '}
+        与它通信来控制手机采集。请先启动 Agent；Android 设备还需要本机装好 adb 并加入 PATH，
+        iOS 设备需要本机预装 Python 3.8+。
+      </>
     )
-  }
 
   return (
     <div className="page-shell">
       {pendingUploadsBanner}
-      <section className="panel">
-        <div className="toolbar">
-          <div>
-            <h2 className="text-base font-semibold text-slate-950">性能采集</h2>
-            <div className="mt-1 text-sm text-slate-500">选择设备和 App，开始实时性能采集</div>
-          </div>
-          <button className="btn btn-secondary" type="button" onClick={() => devicesQuery.refetch()}>
-            <RefreshCw size={16} className={devicesQuery.isFetching ? 'animate-spin' : ''} />
-            刷新设备
-          </button>
-        </div>
 
-        <div className="panel-body space-y-4">
-          <div className="grid gap-4 lg:grid-cols-3">
-            <label className="space-y-1">
-              <span className="field-label">设备</span>
-              <select
-                className="input"
-                disabled={activeTask !== null}
-                value={selectedDeviceId}
-                onChange={(event) => setSelectedDeviceId(event.target.value)}
-              >
-                <option value="">请选择设备</option>
-                {(devicesQuery.data ?? []).map((device) => (
-                  <option disabled={device.status !== 'available'} key={device.device_id} value={device.device_id}>
-                    {device.device_name}（{device.platform} {device.version}）
-                    {device.status !== 'available' ? ' - 离线' : ''}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="space-y-1">
-              <span className="field-label">包名</span>
-              <input
-                className="input"
-                disabled={activeTask !== null}
-                list="perf-device-apps"
-                placeholder="com.example.app"
-                value={packageName}
-                onChange={(event) => setPackageName(event.target.value)}
-              />
-              <datalist id="perf-device-apps">
-                {(appsQuery.data ?? []).map((app) => (
-                  <option key={app.package_name} value={app.package_name}>
-                    {app.app_name}
-                  </option>
-                ))}
-              </datalist>
-            </label>
-            <label className="space-y-1">
-              <span className="field-label">进程名（留空同包名）</span>
-              <input
-                className="input"
-                disabled={activeTask !== null}
-                placeholder={packageName}
-                value={processName}
-                onChange={(event) => setProcessName(event.target.value)}
-              />
-            </label>
-          </div>
+      <div className="flex gap-2">
+        <button
+          className={`btn ${activeTab === 'collect' ? 'btn-primary' : 'btn-secondary'}`}
+          type="button"
+          onClick={() => setActiveTab('collect')}
+        >
+          开始采集
+        </button>
+        <button
+          className={`btn ${activeTab === 'history' ? 'btn-primary' : 'btn-secondary'}`}
+          type="button"
+          onClick={() => setActiveTab('history')}
+        >
+          历史数据
+        </button>
+      </div>
 
-          {startError ? <div className="rounded-md bg-red-50 px-4 py-3 text-sm text-red-700">{startError}</div> : null}
-          {uploadError ? (
-            <div className="rounded-md bg-red-50 px-4 py-3 text-sm text-red-700">上报采集记录失败：{uploadError}</div>
-          ) : null}
-
-          {activeTask ? (
-            <div className="space-y-3 rounded-lg border border-blue-100 bg-blue-50/60 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2 text-sm font-semibold text-blue-700">
-                  <Smartphone size={16} />
-                  {activeTask.status === 'collecting' ? '正在采集' : '采集已中断'} · {activeTask.package_name}
-                  <span className="inline-flex h-6 items-center rounded bg-blue-100 px-2 text-xs font-semibold text-blue-700 ring-1 ring-blue-200">
-                    已采集 {activeTask.samples.length} 个样本
-                  </span>
-                </div>
-                <button className="btn btn-danger" type="button" onClick={handleStop}>
-                  <Square size={16} />
-                  停止采集
-                </button>
-              </div>
-              {activeTask.status !== 'collecting' ? (
-                <div className="rounded-md bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                  设备已断开，采集自动中断{activeTask.last_error ? `：${activeTask.last_error}` : ''}
-                  。点击"停止采集"确认并上报这段记录。
-                </div>
-              ) : null}
-              <PerfLiveMetrics task={activeTask} />
+      {activeTab === 'collect' ? (
+        agentStatus !== 'ready' ? (
+          <section className="panel panel-body flex flex-col items-center gap-4 py-12 text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-amber-50 text-amber-600 ring-1 ring-amber-200">
+              <AlertTriangle size={26} />
             </div>
-          ) : (
-            <button
-              className="btn btn-primary"
-              disabled={!selectedDevice || packageName.trim() === ''}
-              type="button"
-              onClick={handleStart}
-            >
-              <Play size={16} />
-              开始采集
+            <div>
+              <h2 className="text-base font-semibold text-slate-950">{agentGateHeading}</h2>
+              <p className="mt-2 max-w-md text-sm text-slate-500">{agentGateDescription}</p>
+            </div>
+            <button className="btn btn-secondary" disabled={probing} type="button" onClick={probe}>
+              <RefreshCw size={16} className={probing ? 'animate-spin' : ''} />
+              重新检测
             </button>
-          )}
-        </div>
-      </section>
 
-      <section className="panel">
-        <div className="toolbar">
-          <div>
-            <h2 className="text-base font-semibold text-slate-950">历史记录</h2>
-            <div className="mt-1 text-sm text-slate-500">采集结束后自动上报到平台，多端可见</div>
-          </div>
-        </div>
-
-        {historyQuery.isError ? (
-          <div className="panel-body text-sm text-red-700">{getErrorMessage(historyQuery.error)}</div>
+            {agentStatus === 'unreachable' || agentStatus === 'incompatible' ? (
+              <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+                {(agentDownloadsQuery.data ?? []).map((option) => (
+                  <a
+                    className={`btn ${option.available ? 'btn-primary' : 'btn-secondary pointer-events-none opacity-50'}`}
+                    download
+                    href={option.available ? perfAgentDownloadURL(option.filename) : undefined}
+                    key={option.platform}
+                  >
+                    <Download size={16} />
+                    {option.label}
+                    {!option.available ? '（暂未提供）' : ''}
+                  </a>
+                ))}
+              </div>
+            ) : null}
+          </section>
         ) : (
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>App</th>
-                  <th>设备</th>
-                  <th>平台</th>
-                  <th>状态</th>
-                  <th>样本数</th>
-                  <th>开始时间</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/50 bg-white/35">
-                {historyQuery.isFetching ? (
+          <section className="panel">
+            <div className="toolbar">
+              <div>
+                <h2 className="text-base font-semibold text-slate-950">性能采集</h2>
+                <div className="mt-1 text-sm text-slate-500">选择设备和 App，开始实时性能采集</div>
+              </div>
+              <button className="btn btn-secondary" type="button" onClick={() => devicesQuery.refetch()}>
+                <RefreshCw size={16} className={devicesQuery.isFetching ? 'animate-spin' : ''} />
+                刷新设备
+              </button>
+            </div>
+
+            <div className="panel-body space-y-4">
+              <div className="grid gap-4 lg:grid-cols-3">
+                <label className="space-y-1">
+                  <span className="field-label">设备</span>
+                  <select
+                    className="input"
+                    disabled={activeTask !== null}
+                    value={selectedDeviceId}
+                    onChange={(event) => setSelectedDeviceId(event.target.value)}
+                  >
+                    <option value="">请选择设备</option>
+                    {(devicesQuery.data ?? []).map((device) => (
+                      <option disabled={device.status !== 'available'} key={device.device_id} value={device.device_id}>
+                        {device.device_name}（{device.platform} {device.version}）
+                        {device.status !== 'available' ? ' - 离线' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-1">
+                  <span className="field-label">包名</span>
+                  <input
+                    className="input"
+                    disabled={activeTask !== null}
+                    list="perf-device-apps"
+                    placeholder="com.example.app"
+                    value={packageName}
+                    onChange={(event) => setPackageName(event.target.value)}
+                  />
+                  <datalist id="perf-device-apps">
+                    {(appsQuery.data ?? []).map((app) => (
+                      <option key={app.package_name} value={app.package_name}>
+                        {app.app_name}
+                      </option>
+                    ))}
+                  </datalist>
+                </label>
+                <label className="space-y-1">
+                  <span className="field-label">进程名（留空同包名）</span>
+                  <input
+                    className="input"
+                    disabled={activeTask !== null}
+                    placeholder={packageName}
+                    value={processName}
+                    onChange={(event) => setProcessName(event.target.value)}
+                  />
+                </label>
+              </div>
+
+              {startError ? (
+                <div className="rounded-md bg-red-50 px-4 py-3 text-sm text-red-700">{startError}</div>
+              ) : null}
+              {uploadError ? (
+                <div className="rounded-md bg-red-50 px-4 py-3 text-sm text-red-700">上报采集记录失败：{uploadError}</div>
+              ) : null}
+
+              {activeTask ? (
+                <div className="space-y-3 rounded-lg border border-blue-100 bg-blue-50/60 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-blue-700">
+                      <Smartphone size={16} />
+                      {activeTask.status === 'collecting' ? '正在采集' : '采集已中断'} · {activeTask.package_name}
+                      <span className="inline-flex h-6 items-center rounded bg-blue-100 px-2 text-xs font-semibold text-blue-700 ring-1 ring-blue-200">
+                        已采集 {activeTask.samples.length} 个样本
+                      </span>
+                    </div>
+                    <button className="btn btn-danger" type="button" onClick={handleStop}>
+                      <Square size={16} />
+                      停止采集
+                    </button>
+                  </div>
+                  {activeTask.status !== 'collecting' ? (
+                    <div className="rounded-md bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                      设备已断开，采集自动中断{activeTask.last_error ? `：${activeTask.last_error}` : ''}
+                      。点击"停止采集"确认并上报这段记录。
+                    </div>
+                  ) : null}
+                  <PerfLiveMetrics task={activeTask} />
+                </div>
+              ) : (
+                <button
+                  className="btn btn-primary"
+                  disabled={!selectedDevice || packageName.trim() === ''}
+                  type="button"
+                  onClick={handleStart}
+                >
+                  <Play size={16} />
+                  开始采集
+                </button>
+              )}
+            </div>
+          </section>
+        )
+      ) : (
+        <section className="panel">
+          <div className="toolbar">
+            <div>
+              <h2 className="text-base font-semibold text-slate-950">历史数据</h2>
+              <div className="mt-1 text-sm text-slate-500">
+                采集结束后自动上报到平台，所有登录用户可见，不需要本地 Agent
+              </div>
+            </div>
+            <button className="btn btn-secondary" type="button" onClick={() => historyQuery.refetch()}>
+              <RefreshCw size={16} className={historyQuery.isFetching ? 'animate-spin' : ''} />
+              刷新
+            </button>
+          </div>
+
+          {historyQuery.isError ? (
+            <div className="panel-body text-sm text-red-700">{getErrorMessage(historyQuery.error)}</div>
+          ) : (
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead>
                   <tr>
-                    <td className="text-slate-500" colSpan={7}>
-                      加载中
-                    </td>
+                    <th>App</th>
+                    <th>设备</th>
+                    <th>平台</th>
+                    <th>状态</th>
+                    <th>样本数</th>
+                    <th>开始时间</th>
+                    <th>操作</th>
                   </tr>
-                ) : (historyQuery.data ?? []).length === 0 ? (
-                  <tr>
-                    <td className="text-slate-500" colSpan={7}>
-                      暂无采集记录
-                    </td>
-                  </tr>
-                ) : (
-                  (historyQuery.data ?? []).map((task) => (
-                    <tr key={task.id}>
-                      <td className="font-medium text-slate-950">{task.package_name}</td>
-                      <td>{task.device_model || task.device_id}</td>
-                      <td>{task.platform}</td>
-                      <td>{task.status}</td>
-                      <td>{task.sample_count}</td>
-                      <td>{formatDateTime(task.start_time)}</td>
-                      <td>
-                        <div className="flex items-center gap-2">
-                          <button className="icon-btn" type="button" onClick={() => setDetailID(task.id)}>
-                            <Eye size={14} />
-                          </button>
-                          <button
-                            className="icon-btn"
-                            disabled={deleteMutation.isPending}
-                            type="button"
-                            onClick={() => deleteMutation.mutate(task.id)}
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
+                </thead>
+                <tbody className="divide-y divide-white/50 bg-white/35">
+                  {historyQuery.isFetching ? (
+                    <tr>
+                      <td className="text-slate-500" colSpan={7}>
+                        加载中
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+                  ) : (historyQuery.data ?? []).length === 0 ? (
+                    <tr>
+                      <td className="text-slate-500" colSpan={7}>
+                        暂无采集记录
+                      </td>
+                    </tr>
+                  ) : (
+                    (historyQuery.data ?? []).map((task) => (
+                      <tr key={task.id}>
+                        <td className="font-medium text-slate-950">{task.package_name}</td>
+                        <td>{task.device_model || task.device_id}</td>
+                        <td>{task.platform}</td>
+                        <td>{task.status}</td>
+                        <td>{task.sample_count}</td>
+                        <td>{formatDateTime(task.start_time)}</td>
+                        <td>
+                          <div className="flex items-center gap-2">
+                            <button className="icon-btn" type="button" onClick={() => setDetailID(task.id)}>
+                              <Eye size={14} />
+                            </button>
+                            <button
+                              className="icon-btn"
+                              disabled={deleteMutation.isPending}
+                              type="button"
+                              onClick={() => deleteMutation.mutate(task.id)}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
 
       <SlideOver open={detailID !== null} title="采集记录详情" onClose={() => setDetailID(null)}>
         <PerfHistoryDetail detail={detailQuery.data} loading={detailQuery.isLoading} />
