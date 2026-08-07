@@ -9,6 +9,8 @@ import {
   listPerfDeviceApps,
   listPerfDevices,
   MIN_COMPATIBLE_AGENT_VERSION,
+  PerfAgentBusyError,
+  perfAgentStopBeaconURL,
   probePerfAgent,
   startPerfMonitoring,
   stopPerfMonitoring,
@@ -94,7 +96,45 @@ export default function PerfTestPage() {
 
   useEffect(() => closeWS, [])
 
+  // 标签页被刷新/关掉时，activeTask 还在采集的话尽力发一个停止请求——
+  // 减少 Agent 那边设备+App 占用锁没人释放、下次开始采集直接报"该应用
+  // 正在采集"的情况（handleStart 的 PerfAgentBusyError 分支兜底剩下的
+  // 场景：浏览器崩溃、断网导致 beacon 没发出去等）。
+  const activeTaskIdRef = useRef<string | null>(null)
+  activeTaskIdRef.current = activeTask?.task_id ?? null
+  useEffect(() => {
+    function handleBeforeUnload() {
+      if (activeTaskIdRef.current) {
+        navigator.sendBeacon(perfAgentStopBeaconURL(activeTaskIdRef.current))
+      }
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [])
+
   const selectedDevice = devicesQuery.data?.find((device) => device.device_id === selectedDeviceId)
+
+  // subscribeToTask 订阅指定任务的增量推送，正常开始采集、以及接管一个
+  // Agent 那边已经在跑但前端不知道的任务（见下面 PerfAgentBusyError 分支）
+  // 都走这一条路径，避免两处维护同一套 WS 接线逻辑。
+  function subscribeToTask(taskId: string) {
+    wsCleanup.current = connectPerfMonitoringWS(taskId, {
+      onUpdate: (update) => {
+        setActiveTask((current) => {
+          if (!current || current.task_id !== taskId) {
+            return current
+          }
+          return {
+            ...current,
+            status: update.status,
+            last_error: update.lastError,
+            samples: [...current.samples, ...update.newSamples],
+          }
+        })
+      },
+      onError: (message) => setStartError(message),
+    })
+  }
 
   async function handleStart() {
     if (!selectedDevice || packageName.trim() === '') {
@@ -122,24 +162,21 @@ export default function PerfTestPage() {
         samples: [],
       }
       setActiveTask(initial)
-
-      wsCleanup.current = connectPerfMonitoringWS(started.task_id, {
-        onUpdate: (update) => {
-          setActiveTask((current) => {
-            if (!current || current.task_id !== started.task_id) {
-              return current
-            }
-            return {
-              ...current,
-              status: update.status,
-              last_error: update.lastError,
-              samples: [...current.samples, ...update.newSamples],
-            }
-          })
-        },
-        onError: (message) => setStartError(message),
-      })
+      subscribeToTask(started.task_id)
     } catch (error) {
+      // Agent 那边这个设备+App 已经有任务在跑（常见于标签页刷新/关掉时
+      // 没走"停止采集"）——不是死路一条的报错，直接接管显示那个任务。
+      if (error instanceof PerfAgentBusyError && error.taskId) {
+        try {
+          const running = await getPerfMonitoringTask(error.taskId)
+          setActiveTask(running)
+          subscribeToTask(error.taskId)
+          return
+        } catch (attachError) {
+          setStartError(getErrorMessage(attachError))
+          return
+        }
+      }
       setStartError(getErrorMessage(error))
     }
   }

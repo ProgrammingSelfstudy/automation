@@ -18,6 +18,18 @@ const (
 	TaskStatusInterrupted = "interrupted" // 设备断开等异常导致采集中断
 )
 
+// ErrAlreadyCollecting 表示同一个设备 + 包名已经有任务在跑。TaskID 是那个
+// 正在跑的任务——HTTP handler 把它放进结构化响应的 data 里，前端拿到后
+// 可以直接接管显示这个任务（重新拉一次数据、订阅 WS），而不是死路一条的
+// 报错，用户不用手动重启 Agent 才能解封。
+type ErrAlreadyCollecting struct {
+	TaskID string
+}
+
+func (e *ErrAlreadyCollecting) Error() string {
+	return fmt.Sprintf("该应用正在采集，task_id=%s", e.TaskID)
+}
+
 // MetricSample 是一次完整性能采集数据。
 type MetricSample struct {
 	CollectTime string      `json:"collect_time"` // 采集时间
@@ -134,10 +146,7 @@ func (m *Manager) Start(
 	// 同一个设备、同一个包名只允许一个运行任务。
 	if runningTaskID, exists := m.targets[targetKey]; exists {
 		m.mu.Unlock()
-		return Task{}, fmt.Errorf(
-			"该应用正在采集，task_id=%s",
-			runningTaskID,
-		)
+		return Task{}, &ErrAlreadyCollecting{TaskID: runningTaskID}
 	}
 
 	taskID, err := m.generateTaskIDLocked()

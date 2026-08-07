@@ -25,6 +25,13 @@ func Fail(w http.ResponseWriter, code int, msg string) {
 	writeResp(w, Resp{Code: code, Msg: msg, Data: nil})
 }
 
+// FailWithData 跟 Fail 一样是业务失败，但 data 里带着调用方能用来自动恢复的
+// 结构化信息（比如"已经在跑的 task_id"），不是纯文本错误提示——前端不用
+// 反过来正则解析中文错误信息才能拿到这个 ID。
+func FailWithData(w http.ResponseWriter, code int, msg string, data interface{}) {
+	writeResp(w, Resp{Code: code, Msg: msg, Data: data})
+}
+
 // writeResp 写 JSON 响应。HTTP 状态码固定 200——区分 HTTP 网络错误和业务逻辑
 // 错误是这个项目的既有约定，前端不用区分 4xx/5xx，统一解析 Resp.Code 就行。
 func writeResp(w http.ResponseWriter, resp Resp) {

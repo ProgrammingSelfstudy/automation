@@ -6,6 +6,15 @@
 export const PERF_AGENT_BASE_URL =
   import.meta.env.VITE_PERF_AGENT_BASE_URL || 'http://127.0.0.1:9527'
 
+// perfAgentStopBeaconURL 供 PerfTestPage 在 beforeunload 时用
+// navigator.sendBeacon 发一个尽力而为的停止请求——标签页被刷新/关掉时
+// 没法等 fetch 的响应，sendBeacon 是浏览器唯一保证"页面卸载后还能把这个
+// 请求发出去"的方式。这只解开 Agent 那边的设备+App 占用锁，不会把这次
+// 采集记录同步到中心平台（那需要拿到最终数据再转发，卸载期间做不到）。
+export function perfAgentStopBeaconURL(taskId: string): string {
+  return `${PERF_AGENT_BASE_URL}/api/collect/perf/${encodeURIComponent(taskId)}/stop`
+}
+
 const PROBE_TIMEOUT_MS = 1500
 
 // MIN_COMPATIBLE_AGENT_VERSION 是这版页面能正常对话的最低 Agent 版本号。
@@ -155,6 +164,22 @@ export async function listPerfDeviceApps(deviceId: string, signal?: AbortSignal)
   return payload.items ?? []
 }
 
+// PerfAgentBusyError：Agent 返回"这个设备+App 已经有任务在跑"（错误码
+// 10011，见 client/internal/perf/start/start_collect.go）。常见于标签页
+// 被刷新/关掉时没走"停止采集"，Agent 进程内存里的任务没人通知，前端也
+// 就再也不知道它的存在——不能只报错让用户卡死，taskId 让调用方可以直接
+// 接管显示这个任务（见 PerfTestPage.tsx 的 handleStart）。
+export class PerfAgentBusyError extends Error {
+  taskId: string
+  constructor(taskId: string, message: string) {
+    super(message)
+    this.name = 'PerfAgentBusyError'
+    this.taskId = taskId
+  }
+}
+
+const ALREADY_COLLECTING_CODE = 10011
+
 export async function startPerfMonitoring(params: {
   deviceId: string
   packageName: string
@@ -171,7 +196,25 @@ export async function startPerfMonitoring(params: {
       device_model: params.deviceModel || '',
     }),
   })
-  return readEnvelope(response, '启动性能采集失败')
+
+  let result: ApiEnvelope<{ task_id: string; start_time: string; sample_interval_ms: number }> | null = null
+  try {
+    result = await response.json()
+  } catch {
+    // 非 JSON 响应用 HTTP 状态兜底
+  }
+
+  if (result?.code === ALREADY_COLLECTING_CODE) {
+    const taskId = (result.data as { task_id?: string } | null)?.task_id ?? ''
+    throw new PerfAgentBusyError(taskId, result.msg || '该应用正在采集')
+  }
+  if (!response.ok) {
+    throw new Error(result?.msg || `启动性能采集失败（HTTP ${response.status}）`)
+  }
+  if (!result || result.code !== 0) {
+    throw new Error(result?.msg || '启动性能采集失败')
+  }
+  return result.data
 }
 
 function numberValue(value: unknown): number {

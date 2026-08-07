@@ -3,6 +3,7 @@ package start
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -57,6 +58,13 @@ func StartCollectPerf(w http.ResponseWriter, r *http.Request) {
 		req.DeviceModel,
 	)
 	if err != nil {
+		var conflict *perf.ErrAlreadyCollecting
+		if errors.As(err, &conflict) {
+			// 结构化返回已经在跑的 task_id，前端据此接管显示这个任务，
+			// 不是让用户卡在一条只能重启 Agent 才能解决的错误提示里。
+			common.FailWithData(w, 10011, "该应用正在采集", map[string]string{"task_id": conflict.TaskID})
+			return
+		}
 		common.Fail(w, 10007, "启动性能采集失败: "+err.Error())
 		return
 	}
