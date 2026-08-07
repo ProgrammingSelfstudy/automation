@@ -15,6 +15,7 @@ import {
   type PerfMonitoringTask,
 } from '../api/perfAgent'
 import PendingPerfUploadsBanner from '../components/PendingPerfUploadsBanner'
+import PerfRealtimeChart from '../components/PerfRealtimeChart'
 import usePerfUploadRetryQueue from '../hooks/usePerfUploadRetryQueue'
 import { getErrorMessage } from '../utils/format'
 
@@ -368,13 +369,48 @@ function PerfLiveMetrics({ task }: { task: PerfMonitoringTask }) {
     { label: 'Big Jank', value: latest.big_jank.toFixed(0) },
   ]
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-      {stats.map((stat) => (
-        <div className="rounded-md bg-white/70 px-3 py-2 text-center shadow-sm" key={stat.label}>
-          <div className="text-xs text-slate-500">{stat.label}</div>
-          <div className="mt-1 text-sm font-semibold text-slate-950">{stat.value}</div>
-        </div>
-      ))}
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        {stats.map((stat) => (
+          <div className="rounded-md bg-white/70 px-3 py-2 text-center shadow-sm" key={stat.label}>
+            <div className="text-xs text-slate-500">{stat.label}</div>
+            <div className="mt-1 text-sm font-semibold text-slate-950">{stat.value}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-2">
+        <PerfRealtimeChart
+          title="CPU"
+          samples={task.samples}
+          unit="%"
+          fixedRange={[0, 100]}
+          series={[
+            { metric: 'app_cpu', label: 'App CPU', color: '#2a78d6' },
+            { metric: 'total_cpu', label: '总 CPU', color: '#008300' },
+          ]}
+        />
+        <PerfRealtimeChart
+          title="内存"
+          samples={task.samples}
+          unit="MB"
+          series={[
+            { metric: 'memory_pss', label: 'PSS', color: '#2a78d6' },
+            { metric: 'java_heap', label: 'Java Heap', color: '#008300' },
+            { metric: 'native_heap', label: 'Native Heap', color: '#e87ba4' },
+          ]}
+        />
+        <PerfRealtimeChart title="FPS" samples={task.samples} unit="fps" fixedRange={[0, 60]} series={[{ metric: 'fps', label: 'FPS', color: '#2a78d6' }]} />
+        <PerfRealtimeChart
+          title="Jank"
+          samples={task.samples}
+          unit="count"
+          series={[
+            { metric: 'jank', label: 'Jank', color: '#2a78d6' },
+            { metric: 'big_jank', label: 'Big Jank', color: '#eb6834' },
+          ]}
+        />
+      </div>
     </div>
   )
 }
