@@ -8,6 +8,7 @@ import {
   FileCode2,
   Gauge,
   Globe2,
+  History,
   KeyRound,
   ListChecks,
   LogOut,
@@ -25,6 +26,7 @@ import AccountsPage from './pages/AccountsPage'
 import CreateTaskPage from './pages/CreateTaskPage'
 import InterfacesPage from './pages/InterfacesPage'
 import LoginPage from './pages/LoginPage'
+import PerfHistoryPage from './pages/PerfHistoryPage'
 import PerfTestPage from './pages/PerfTestPage'
 import ScenariosPage from './pages/ScenariosPage'
 import TaskDetailPage from './pages/TaskDetailPage'
@@ -49,7 +51,10 @@ const moduleSections = [
   {
     key: 'perf-test',
     title: '性能测试',
-    items: [{ to: '/perf', label: '性能采集', icon: Gauge }],
+    items: [
+      { to: '/perf', label: '性能采集', icon: Gauge },
+      { to: '/perf/history', label: '历史数据', icon: History },
+    ],
   },
 ]
 
@@ -222,7 +227,7 @@ export default function App() {
                                 : 'text-slate-600 hover:bg-white/70 hover:text-blue-700',
                             ].join(' ')
                           }
-                          end={item.to === '/runs'}
+                          end={item.to === '/runs' || item.to === '/perf'}
                           key={item.to}
                           to={item.to}
                         >
@@ -248,6 +253,7 @@ export default function App() {
             <Route element={<CreateTaskPage />} path="/tasks/new" />
             <Route element={<TaskDetailPage />} path="/tasks/:id" />
             <Route element={<PerfTestPage />} path="/perf" />
+            <Route element={<PerfHistoryPage />} path="/perf/history" />
             <Route element={<Navigate replace to="/interfaces" />} path="*" />
           </Routes>
         </main>
