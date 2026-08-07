@@ -3,7 +3,9 @@ import { Eye, RefreshCw, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 
 import { deletePerfTask, getPerfTask, listPerfTasks, type PerfTaskResponse } from '../api/client'
+import type { PerfMonitoringSample } from '../api/perfAgent'
 import PendingPerfUploadsBanner from '../components/PendingPerfUploadsBanner'
+import PerfMetricCharts from '../components/PerfMetricCharts'
 import SlideOver from '../components/SlideOver'
 import usePerfUploadRetryQueue from '../hooks/usePerfUploadRetryQueue'
 import { formatDateTime, getErrorMessage } from '../utils/format'
@@ -121,6 +123,29 @@ export default function PerfHistoryPage() {
   )
 }
 
+// toChartSamples：detail.samples 落库前经过 createPerfTask 请求体，类型
+// 是 unknown（perfstore 原样存 JSON，不强绑定具体样本结构，见
+// internal/perfstore/store.go 的注释）。这里防御性地转成 PerfRealtimeChart
+// 需要的形状，字段缺失/类型不对就按 0 处理，不让个别脏数据整个图表崩掉。
+function toChartSamples(raw: unknown): PerfMonitoringSample[] {
+  if (!Array.isArray(raw)) return []
+  return raw.map((item) => {
+    const record = (item ?? {}) as Record<string, unknown>
+    const num = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : Number(value) || 0)
+    return {
+      collected_at: typeof record.collected_at === 'string' ? record.collected_at : '',
+      total_cpu: num(record.total_cpu),
+      app_cpu: num(record.app_cpu),
+      memory_pss: num(record.memory_pss),
+      java_heap: num(record.java_heap),
+      native_heap: num(record.native_heap),
+      fps: num(record.fps),
+      jank: num(record.jank),
+      big_jank: num(record.big_jank),
+    }
+  })
+}
+
 function PerfHistoryDetail({ detail, loading }: { detail?: PerfTaskResponse; loading: boolean }) {
   if (loading) {
     return <div className="text-sm text-slate-500">加载中</div>
@@ -128,7 +153,8 @@ function PerfHistoryDetail({ detail, loading }: { detail?: PerfTaskResponse; loa
   if (!detail) {
     return <div className="text-sm text-slate-500">未找到记录</div>
   }
-  const samples = Array.isArray(detail.samples) ? detail.samples : []
+  const rawSamples = Array.isArray(detail.samples) ? detail.samples : []
+  const chartSamples = toChartSamples(detail.samples)
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 text-sm">
@@ -160,10 +186,18 @@ function PerfHistoryDetail({ detail, loading }: { detail?: PerfTaskResponse; loa
       {detail.last_error ? (
         <div className="rounded-md bg-red-50 px-4 py-3 text-sm text-red-700">{detail.last_error}</div>
       ) : null}
+
+      {chartSamples.length > 0 ? (
+        <div>
+          <div className="field-label mb-2">曲线回放（完整这次采集，不做滚动窗口裁剪）</div>
+          <PerfMetricCharts samples={chartSamples} maxSamples={0} />
+        </div>
+      ) : null}
+
       <div>
         <div className="field-label mb-2">原始样本（JSON）</div>
         <pre className="max-h-96 overflow-auto rounded-md bg-slate-950/90 p-4 text-xs text-slate-100">
-          {JSON.stringify(samples, null, 2)}
+          {JSON.stringify(rawSamples, null, 2)}
         </pre>
       </div>
     </div>

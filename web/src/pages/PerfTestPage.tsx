@@ -17,7 +17,7 @@ import {
   type PerfMonitoringTask,
 } from '../api/perfAgent'
 import PendingPerfUploadsBanner from '../components/PendingPerfUploadsBanner'
-import PerfRealtimeChart from '../components/PerfRealtimeChart'
+import PerfMetricCharts from '../components/PerfMetricCharts'
 import usePerfUploadRetryQueue from '../hooks/usePerfUploadRetryQueue'
 import { getErrorMessage } from '../utils/format'
 
@@ -416,38 +416,7 @@ function PerfLiveMetrics({ task }: { task: PerfMonitoringTask }) {
         ))}
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-2">
-        <PerfRealtimeChart
-          title="CPU"
-          samples={task.samples}
-          unit="%"
-          fixedRange={[0, 100]}
-          series={[
-            { metric: 'app_cpu', label: 'App CPU', color: '#2a78d6' },
-            { metric: 'total_cpu', label: '总 CPU', color: '#008300' },
-          ]}
-        />
-        <PerfRealtimeChart
-          title="内存"
-          samples={task.samples}
-          unit="MB"
-          series={[
-            { metric: 'memory_pss', label: 'PSS', color: '#2a78d6' },
-            { metric: 'java_heap', label: 'Java Heap', color: '#008300' },
-            { metric: 'native_heap', label: 'Native Heap', color: '#e87ba4' },
-          ]}
-        />
-        <PerfRealtimeChart title="FPS" samples={task.samples} unit="fps" fixedRange={[0, 60]} series={[{ metric: 'fps', label: 'FPS', color: '#2a78d6' }]} />
-        <PerfRealtimeChart
-          title="Jank"
-          samples={task.samples}
-          unit="count"
-          series={[
-            { metric: 'jank', label: 'Jank', color: '#2a78d6' },
-            { metric: 'big_jank', label: 'Big Jank', color: '#eb6834' },
-          ]}
-        />
-      </div>
+      <PerfMetricCharts samples={task.samples} />
     </div>
   )
 }

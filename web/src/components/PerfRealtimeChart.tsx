@@ -39,12 +39,17 @@ export default function PerfRealtimeChart({
   series,
   unit,
   fixedRange,
+  maxSamples = MAX_SAMPLES,
 }: {
   title: string
   samples: PerfMonitoringSample[]
   series: PerfChartSeriesConfig[]
   unit: string
   fixedRange?: [number, number]
+  // maxSamples：只保留最近 N 个采样点。实时采集页面用默认值 60（滚动窗口，
+  // 图表不会随采集时间越拉越挤）；历史记录回放整段数据想看全貌，传 0 表示
+  // 不做窗口裁剪。
+  maxSamples?: number
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
@@ -67,7 +72,7 @@ export default function PerfRealtimeChart({
     const chart = chartRef.current
     if (!chart) return
 
-    const recentSamples = samples.slice(-MAX_SAMPLES)
+    const recentSamples = maxSamples > 0 ? samples.slice(-maxSamples) : samples
     const categories = recentSamples.map((sample) => formatSampleTime(sample.collected_at))
 
     chart.setOption(
@@ -108,15 +113,16 @@ export default function PerfRealtimeChart({
       },
       { notMerge: true },
     )
-  }, [samples, series, unit, fixedRange])
+  }, [samples, series, unit, fixedRange, maxSamples])
 
   const hasSamples = samples.length > 0
+  const shownCount = maxSamples > 0 ? Math.min(samples.length, maxSamples) : samples.length
 
   return (
     <div className="rounded-lg border border-white/60 bg-white/70 p-4 shadow-sm backdrop-blur-xl" aria-label={title}>
       <span className="text-xs font-semibold uppercase text-slate-500">{title}</span>
       <div className="relative mt-2">
-        <div className="h-[160px] w-full" ref={containerRef} role="img" aria-label={`${title}，最近 ${Math.min(samples.length, MAX_SAMPLES)} 个采样点`} />
+        <div className="h-[160px] w-full" ref={containerRef} role="img" aria-label={`${title}，共 ${shownCount} 个采样点`} />
         {!hasSamples ? (
           <div className="absolute inset-0 flex items-center justify-center text-sm text-slate-400">等待性能采样数据</div>
         ) : null}
