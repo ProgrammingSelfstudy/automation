@@ -10,3 +10,7 @@ client/data/
 
 # 中心平台下载入口用的 Agent 二进制，make perf-agent-build 生成，不入库
 assets/perf-agent/
+
+# scripts/deploy.sh 用的服务器地址等环境特定配置，不同人部署到不同服务器，
+# 不该写进仓库；从 scripts/deploy.env.example 复制一份改成自己的值
+scripts/deploy.env
