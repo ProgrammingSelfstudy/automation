@@ -25,6 +25,7 @@ import {
   getPerfMonitoringTask,
   listPerfDeviceApps,
   listPerfDevices,
+  MIN_COMPATIBLE_AGENT_VERSION,
   probePerfAgent,
   startPerfMonitoring,
   stopPerfMonitoring,
@@ -45,9 +46,12 @@ function toRFC3339(raw: string): string {
   return Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString()
 }
 
+type AgentStatus = 'checking' | 'unreachable' | 'incompatible' | 'ready'
+
 export default function PerfTestPage() {
   const queryClient = useQueryClient()
-  const [agentAvailable, setAgentAvailable] = useState<boolean | null>(null)
+  const [agentStatus, setAgentStatus] = useState<AgentStatus>('checking')
+  const [agentVersion, setAgentVersion] = useState<string | null>(null)
   const [probing, setProbing] = useState(false)
 
   const [selectedDeviceId, setSelectedDeviceId] = useState('')
@@ -63,8 +67,14 @@ export default function PerfTestPage() {
 
   async function probe() {
     setProbing(true)
-    const available = await probePerfAgent()
-    setAgentAvailable(available)
+    const result = await probePerfAgent()
+    if (!result.reachable) {
+      setAgentStatus('unreachable')
+      setAgentVersion(null)
+    } else {
+      setAgentStatus(result.compatible ? 'ready' : 'incompatible')
+      setAgentVersion(result.version)
+    }
     setProbing(false)
   }
 
@@ -75,20 +85,20 @@ export default function PerfTestPage() {
   const agentDownloadsQuery = useQuery({
     queryKey: ['perf-agent', 'downloads'],
     queryFn: listPerfAgentDownloads,
-    enabled: agentAvailable === false,
+    enabled: agentStatus === 'unreachable' || agentStatus === 'incompatible',
   })
 
   const devicesQuery = useQuery({
     queryKey: ['perf-agent', 'devices'],
     queryFn: ({ signal }) => listPerfDevices(signal),
-    enabled: agentAvailable === true,
-    refetchInterval: agentAvailable === true ? 5000 : false,
+    enabled: agentStatus === 'ready',
+    refetchInterval: agentStatus === 'ready' ? 5000 : false,
   })
 
   const appsQuery = useQuery({
     queryKey: ['perf-agent', 'apps', selectedDeviceId],
     queryFn: ({ signal }) => listPerfDeviceApps(selectedDeviceId, signal),
-    enabled: agentAvailable === true && selectedDeviceId !== '',
+    enabled: agentStatus === 'ready' && selectedDeviceId !== '',
   })
 
   const historyQuery = useQuery({
@@ -209,7 +219,31 @@ export default function PerfTestPage() {
     }
   }
 
-  if (agentAvailable !== true) {
+  if (agentStatus !== 'ready') {
+    const heading =
+      agentStatus === 'checking'
+        ? '正在检测本地采集工具…'
+        : agentStatus === 'incompatible'
+          ? '本地采集工具版本过旧，请升级'
+          : '未检测到本地采集工具'
+
+    const description =
+      agentStatus === 'incompatible' ? (
+        <>
+          当前本地 Agent 版本是 <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">{agentVersion}</code>
+          ，低于这版页面要求的最低版本{' '}
+          <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">{MIN_COMPATIBLE_AGENT_VERSION}</code>
+          ，部分接口字段可能对不上。请退出旧版 Agent，下载安装下面的新版本后重新启动。
+        </>
+      ) : (
+        <>
+          性能测试需要在你自己的电脑上运行本地采集 Agent（perf-rabbit），浏览器通过{' '}
+          <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">127.0.0.1:9527</code>{' '}
+          与它通信来控制手机采集。请先启动 Agent；Android 设备还需要本机装好 adb 并加入 PATH，
+          iOS 设备需要本机预装 Python 3.8+。
+        </>
+      )
+
     return (
       <div className="page-shell">
         <section className="panel panel-body flex flex-col items-center gap-4 py-12 text-center">
@@ -217,22 +251,15 @@ export default function PerfTestPage() {
             <AlertTriangle size={26} />
           </div>
           <div>
-            <h2 className="text-base font-semibold text-slate-950">
-              {agentAvailable === null ? '正在检测本地采集工具…' : '未检测到本地采集工具'}
-            </h2>
-            <p className="mt-2 max-w-md text-sm text-slate-500">
-              性能测试需要在你自己的电脑上运行本地采集 Agent（perf-rabbit），浏览器通过{' '}
-              <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">127.0.0.1:9527</code>{' '}
-              与它通信来控制手机采集。请先启动 Agent；Android 设备还需要本机装好 adb 并加入
-              PATH，iOS 设备需要本机预装 Python 3.8+。
-            </p>
+            <h2 className="text-base font-semibold text-slate-950">{heading}</h2>
+            <p className="mt-2 max-w-md text-sm text-slate-500">{description}</p>
           </div>
           <button className="btn btn-secondary" disabled={probing} type="button" onClick={probe}>
             <RefreshCw size={16} className={probing ? 'animate-spin' : ''} />
             重新检测
           </button>
 
-          {agentAvailable === false ? (
+          {agentStatus === 'unreachable' || agentStatus === 'incompatible' ? (
             <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
               {(agentDownloadsQuery.data ?? []).map((option) => (
                 <a

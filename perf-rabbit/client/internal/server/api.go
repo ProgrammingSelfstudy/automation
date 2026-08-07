@@ -11,6 +11,9 @@ import (
 )
 
 func RegisterAPI(mux *http.ServeMux) {
+	// 上报 Agent 版本号，供中心平台探测存活时顺带做版本兼容检查。
+	mux.HandleFunc("GET /api/agent/info", AgentInfoHandler)
+
 	// 获取设备列表。
 	mux.HandleFunc("GET /api/device/list", device_list.GetDeviceInfo)
 

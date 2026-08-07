@@ -9,6 +9,21 @@ export const PERF_AGENT_BASE_URL =
 
 const PROBE_TIMEOUT_MS = 1500
 
+// MIN_COMPATIBLE_AGENT_VERSION 是这版页面能正常对话的最低 Agent 版本号。
+// 每次改动浏览器<->Agent 的接口协议时，这里和
+// perf-rabbit/client/common/version.go 的 AgentVersion 要一起改。
+export const MIN_COMPATIBLE_AGENT_VERSION = '1.0.0'
+
+function compareVersions(a: string, b: string): number {
+  const partsA = a.split('.').map((part) => Number(part) || 0)
+  const partsB = b.split('.').map((part) => Number(part) || 0)
+  for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+    const diff = (partsA[i] ?? 0) - (partsB[i] ?? 0)
+    if (diff !== 0) return diff
+  }
+  return 0
+}
+
 export type PerfDevice = {
   device_id: string
   device_name: string
@@ -72,18 +87,34 @@ async function readEnvelope<T>(response: Response, fallbackMessage: string): Pro
   return result.data
 }
 
-// probePerfAgent 检测本地 Agent 是否在跑，探测不到就返回 false，由页面
-// 展示"请先下载并启动本地采集工具"的提示，不抛错、不崩页面。
-export async function probePerfAgent(): Promise<boolean> {
+export type PerfAgentProbeResult =
+  | { reachable: false }
+  | { reachable: true; version: string; compatible: boolean }
+
+// probePerfAgent 检测本地 Agent 是否在跑，并顺带拿到它上报的版本号跟
+// MIN_COMPATIBLE_AGENT_VERSION 比较。探测不到就返回 reachable: false，由
+// 页面展示"请先下载并启动本地采集工具"的提示；探测到但版本太旧则
+// compatible: false，页面据此展示"请升级"而不是"未检测到"，不抛错、
+// 不崩页面。
+export async function probePerfAgent(): Promise<PerfAgentProbeResult> {
   try {
-    const response = await fetch(`${PERF_AGENT_BASE_URL}/api/device/list`, {
+    const response = await fetch(`${PERF_AGENT_BASE_URL}/api/agent/info`, {
       method: 'GET',
       headers: { Accept: 'application/json' },
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     })
-    return response.ok
+    if (!response.ok) {
+      return { reachable: false }
+    }
+    const payload = await readEnvelope<{ version: string }>(response, '探测本地采集工具失败')
+    const version = payload.version || '0.0.0'
+    return {
+      reachable: true,
+      version,
+      compatible: compareVersions(version, MIN_COMPATIBLE_AGENT_VERSION) >= 0,
+    }
   } catch {
-    return false
+    return { reachable: false }
   }
 }
 
