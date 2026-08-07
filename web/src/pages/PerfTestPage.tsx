@@ -201,7 +201,7 @@ export default function PerfTestPage() {
         </>
       ) : (
         <>
-          性能测试需要在你自己的电脑上运行本地采集 Agent（perf-rabbit），浏览器通过{' '}
+          性能测试需要在你自己的电脑上运行本地采集 Agent，浏览器通过{' '}
           <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">127.0.0.1:9527</code>{' '}
           与它通信来控制手机采集。请先启动 Agent；Android 设备还需要本机装好 adb 并加入 PATH，
           iOS 设备需要本机预装 Python 3.8+。已经采集过的历史记录不受影响，去左侧"历史数据"照样能看。

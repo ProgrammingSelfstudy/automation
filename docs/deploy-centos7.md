@@ -355,7 +355,7 @@ ssh root@server-ip chown -R interface-load-test:interface-load-test /opt/interfa
 
 不用重启后端服务——下载接口是每次请求时才 `os.Stat` 检查文件在不在，新传上去的文件立刻生效。在页面"性能测试"模块的"未检测到本地采集工具"提示里点一下下载按钮确认能下载。
 
-以后 perf-rabbit 代码有更新，重复这两步：本地 `make perf-agent-build` → `scp` 覆盖过去即可。
+以后本地采集 Agent（`client/` 目录）代码有更新，重复这两步：本地 `make perf-agent-build` → `scp` 覆盖过去即可。
 
 ## 13.（可选）HTTPS
 

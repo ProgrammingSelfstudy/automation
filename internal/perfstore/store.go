@@ -60,9 +60,9 @@ type PerfTaskSummary struct {
 // PerfTask 是一条完整的性能采集历史记录，包含完整时间序列数据。
 //
 // Samples 用 json.RawMessage 存，不在这一层强绑定具体的样本结构——
-// 采集端（本地 Agent）用的是它自己的 MetricSample 类型，这一层只负责
-// 原样存取，避免这个包依赖 perf-rabbit 那个独立 Go module 里的类型
-// （目前两边是各自独立的 go.mod，见 docs/architecture-perf-rabbit-merge.md）。
+// 采集端（本地 Agent，client/internal/perf 包）用的是它自己的样本类型，
+// 这一层只负责原样存取，不反向依赖 client 包的类型，两边职责边界清楚
+// （见 docs/architecture-perf-rabbit-merge.md）。
 type PerfTask struct {
 	PerfTaskSummary
 	Samples json.RawMessage

@@ -5,15 +5,8 @@ bin/
 .claude/
 .DS_Store
 
-# perf-rabbit（本地采集 Agent）：跨平台可执行文件、内嵌前端构建产物、
-# 本地测试时落盘的采集历史，都是构建/运行时产物，不入库
-perf-rabbit/client/release/
-perf-rabbit/client/web/dist/
-perf-rabbit/client/data/
-
-# perf-rabbit-web：独立前端项目的依赖和构建产物
-perf-rabbit-web/node_modules/
-perf-rabbit-web/dist/
+# client（本地采集 Agent）：本地测试时落盘的采集历史，是运行时产物，不入库
+client/data/
 
 # 中心平台下载入口用的 Agent 二进制，make perf-agent-build 生成，不入库
 assets/perf-agent/

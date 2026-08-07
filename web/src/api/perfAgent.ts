@@ -1,8 +1,7 @@
-// 本地采集 Agent 客户端：浏览器直连用户自己电脑上跑着的 perf-rabbit Agent
-// （默认监听 127.0.0.1:9527），走实时采集；采集结束后的完整记录由页面
-// 转发给中心平台的 /api/perf/tasks 落 MySQL（见 docs/architecture-perf-rabbit-merge.md）。
-// 这里的业务逻辑（设备/应用查询、开始/轮询/停止采集）照搬自
-// perf-rabbit-web/src/api.ts，只是换了个不依赖该独立前端项目样式的壳。
+// 本地采集 Agent 客户端：浏览器直连用户自己电脑上跑着的本地采集 Agent
+// （client/cmd/main.go 编译出来的，默认监听 127.0.0.1:9527），走实时采集；
+// 采集结束后的完整记录由页面转发给中心平台的 /api/perf/tasks 落 MySQL
+// （见 docs/architecture-perf-rabbit-merge.md）。
 
 export const PERF_AGENT_BASE_URL =
   import.meta.env.VITE_PERF_AGENT_BASE_URL || 'http://127.0.0.1:9527'
@@ -11,7 +10,7 @@ const PROBE_TIMEOUT_MS = 1500
 
 // MIN_COMPATIBLE_AGENT_VERSION 是这版页面能正常对话的最低 Agent 版本号。
 // 每次改动浏览器<->Agent 的接口协议时，这里和
-// perf-rabbit/client/common/version.go 的 AgentVersion 要一起改。
+// client/common/version.go 的 AgentVersion 要一起改。
 export const MIN_COMPATIBLE_AGENT_VERSION = '1.0.0'
 
 function compareVersions(a: string, b: string): number {

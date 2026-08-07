@@ -71,7 +71,7 @@
 
 **中心平台职责**：
 - 提供"性能测试"模块入口（左侧导航新增一项，跟"接口测试"平级）
-- 提供 Agent 安装包下载（`perf-rabbit/client/release/` 下已经在编译 macOS/Windows 版本，中心平台负责托管这些文件供下载）
+- 提供 Agent 安装包下载（最终落地：`make perf-agent-build` 交叉编译到 `assets/perf-agent/`，中心平台负责托管这些文件供下载，见 Phase 4 完成情况）
 - 页面加载时探测本地 Agent 是否在跑（例如打一次 `ws://127.0.0.1:9527/api/ping` 或复用设备列表接口）；探测不到就展示"请先下载并启动本地采集工具"的引导提示 + 下载按钮，**不报错崩页面**
 - 探测到 Agent 后，浏览器直接跟本地 Agent 建立 WebSocket 连接做实时交互（选设备、选 App、开始/停止采集、实时接收样本），这条连接完全在用户本机内网/回环地址上，不经过中心平台服务器转发
 - 采集任务停止后，把完整记录（对应现有 `PerfHistoryRecord` 结构）存进 MySQL——这一步可以是本地 Agent 直接 `POST` 给中心平台的登录用户身份下（需要 Agent 拿到当前登录用户的一个短期上报凭证，或者更简单：由浏览器在收到 Agent 通过 WS 推送的"任务已停止，最终记录如下"消息后，由浏览器自己带着已有的 session cookie 转发 `POST` 给中心平台——这样不需要给本地 Agent 单独设计一套认证机制，复用浏览器已有的登录态，是 Phase 2 要在两种方案里选一个的点，目前倾向后者，因为不用给 Agent 端另外做鉴权）
@@ -173,8 +173,10 @@ CREATE TABLE perf_task (
 - **Phase 1（本次）**：perf-rabbit、perf-rabbit-web 代码原样并入仓库（各自独立 go.mod/package.json），本文档完成
 - **Phase 2**：`internal/perfstore`（MySQL 版历史存储，方案 A）；perf-rabbit 的 Gin handler 改写成标准库风格、WebSocket 替换轮询；本地 Agent 新增"任务停止后上报中心平台"逻辑（先做"浏览器转发"这个简单版本，如果上面反向思考第 1 点的丢数据风险不可接受，再升级成"Agent 直接上报"）；中心平台新增 Agent 安装包下载入口 + 本地 Agent 存活探测
 - **Phase 3**：前端"性能测试"导航模块（设备列表、开始/停止采集、实时图表、历史列表/详情）。**界面风格必须跟"接口测试"模块保持一致**——复用 automation 前端现有的设计系统（左侧模块导航、`glass-panel`/`panel` 玻璃质感、`data-table` 列表、`SlideOver` 抽屉、`btn-primary`/`btn-secondary` 等既有样式类），只搬 `perf_rabbit_web` 的业务逻辑（设备列表加载、采集状态机、图表渲染），不搬它自己原来那套视觉样式，两个模块要看起来是同一个产品，不是拼进来的两套皮
-- **Phase 4**：~~多用户数据隔离权限模型~~（产品已决定：不做隔离，见上面"好处"一节）；~~Agent/中心平台版本兼容检查~~（已完成：Agent 新增 `GET /api/agent/info` 上报 `common.AgentVersion`，前端 `probePerfAgent` 探测时一并拿版本号跟 `MIN_COMPATIBLE_AGENT_VERSION` 比较，不兼容则提示升级而不是"未检测到"；这两个版本号常量分别在 `perf-rabbit/client/common/version.go` 和 `web/src/api/perfAgent.ts`，以后改协议要同时改）；~~离线上报重试机制~~（已完成 browser-side 这一版：`web/src/utils/perfUploadQueue.ts` 用 localStorage 落一份待重传队列，采集停止拿到最终记录后先入队再尝试上报，上报成功才出队；页面加载时自动重试队列里积压的记录，也提供手动"重试上报"按钮。这解决的是"网络抖动/标签页被关掉又重开"这类同一浏览器内的场景，解决不了"反向思考"第 1 点里"换了台电脑/清了浏览器数据"这种更极端的丢失——如果以后判断这个风险不可接受，仍然需要升级成 Agent 直接上报 + 独立鉴权，这是当前方案没变的已知限制）；~~`perf-rabbit/client/go.mod` 完全并入主 go.mod，退役独立 module~~（已完成：`perf-rabbit/client` 不再有自己的 `go.mod`/`go.sum`，包路径改成 `interface-load-test/perf-rabbit/client/...`；`go test ./...` 从仓库根目录跑一次就顺带把 perf-rabbit 也测了，之前要单独 `cd` 进去跑两遍；`perf-rabbit/CLAUDE.md` 同步更新了所有命令示例）
+- **Phase 4**：~~多用户数据隔离权限模型~~（产品已决定：不做隔离，见上面"好处"一节）；~~Agent/中心平台版本兼容检查~~（已完成：Agent 新增 `GET /api/agent/info` 上报 `common.AgentVersion`，前端 `probePerfAgent` 探测时一并拿版本号跟 `MIN_COMPATIBLE_AGENT_VERSION` 比较，不兼容则提示升级而不是"未检测到"；这两个版本号常量分别在 `client/common/version.go` 和 `web/src/api/perfAgent.ts`，以后改协议要同时改）；~~离线上报重试机制~~（已完成 browser-side 这一版：`web/src/utils/perfUploadQueue.ts` 用 localStorage 落一份待重传队列，采集停止拿到最终记录后先入队再尝试上报，上报成功才出队；页面加载时自动重试队列里积压的记录，也提供手动"重试上报"按钮。这解决的是"网络抖动/标签页被关掉又重开"这类同一浏览器内的场景，解决不了"反向思考"第 1 点里"换了台电脑/清了浏览器数据"这种更极端的丢失——如果以后判断这个风险不可接受，仍然需要升级成 Agent 直接上报 + 独立鉴权，这是当前方案没变的已知限制）；~~`perf-rabbit/client/go.mod` 完全并入主 go.mod，退役独立 module~~（已完成，且随后进一步整理了目录结构——见下）
 
 Phase 4 到此全部完成。
+
+**2026-08-07 追加（目录结构收尾）**：`perf-rabbit/client` 整个目录改名/挪到仓库根目录的 `client/`（包路径从 `interface-load-test/perf-rabbit/client/...` 变成 `interface-load-test/client/...`），`perf-rabbit/` 这层包装目录整个删掉。同时清掉了两块从来没在这次集成里用上的死代码：`cmd/app`（连同它专用的 `internal/webapp` 和内嵌前端 `web`/`web.go` 包）——这是 Phase 1 原样并入时带过来的"独立一体化产品"入口，一直跟中心平台集成无关（真正被下载使用的只有 `cmd/main.go`），以及顶层 `perf-rabbit-web/`（`cmd/app` 用的那个独立前端项目源码）。删除后项目里只有一个前端项目（`web/`），不再有两套前端代码并存的问题。`client/internal/server/config.go` 里只给 `cmd/app` 用的 `AppPort()`/`PERF_RABBIT_PORT` 也一并删了。`client/CLAUDE.md`、`Makefile`、`.gitignore` 里所有引用旧路径的地方同步更新。
 
 Phase 2 及之后每一块开工前，都会先写 spec 给你确认，再实现、再审查，跟这个仓库里其它功能的开发节奏一致。

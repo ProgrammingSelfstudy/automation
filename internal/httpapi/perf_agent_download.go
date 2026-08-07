@@ -8,9 +8,9 @@ import (
 )
 
 // perfAgentDownloads 是本地采集 Agent 支持下载的平台列表。Agent 编译自
-// perf-rabbit/client/cmd/main.go（开发调试入口：只跑后端接口、不内嵌前端、
-// 不自动开浏览器），不是 cmd/app——下载下来的是给中心平台当"本地采集桥"用
-// 的无头程序，不是 perf-rabbit 自己那套风格不一致的独立 UI。
+// client/cmd/main.go——只跑后端接口，不内嵌前端、不自动开浏览器，下载
+// 下来的是给中心平台当"本地采集桥"用的无头程序，UI 全在中心平台自己的
+// web/ 前端里（PerfTestPage/PerfHistoryPage）。
 //
 // 文件名固定写死在这个白名单里，下载接口只按文件名精确匹配，不会把
 // r.PathValue 直接拼进文件系统路径，避免路径穿越。
