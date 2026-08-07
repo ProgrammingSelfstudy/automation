@@ -9,7 +9,7 @@ import {
   Square,
   Trash2,
 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
   createPerfTask,
@@ -33,6 +33,12 @@ import {
 } from '../api/perfAgent'
 import SlideOver from '../components/SlideOver'
 import { formatDateTime, getErrorMessage } from '../utils/format'
+import {
+  enqueuePerfUpload,
+  loadQueuedPerfUploads,
+  removeQueuedPerfUpload,
+  type QueuedPerfUpload,
+} from '../utils/perfUploadQueue'
 
 // Agent 侧时间戳是 "2006-01-02 15:04:05"（Go 的本地时间格式，非 RFC3339），
 // 中心平台的 time.Time 字段按 RFC3339 解析——上报前必须转一次，否则每次
@@ -64,6 +70,8 @@ export default function PerfTestPage() {
   const wsCleanup = useRef<(() => void) | null>(null)
 
   const [detailID, setDetailID] = useState<string | null>(null)
+  const [pendingUploads, setPendingUploads] = useState<QueuedPerfUpload[]>(() => loadQueuedPerfUploads())
+  const [retryingUploads, setRetryingUploads] = useState(false)
 
   async function probe() {
     setProbing(true)
@@ -120,14 +128,40 @@ export default function PerfTestPage() {
     },
   })
 
-  const uploadMutation = useMutation({
-    mutationFn: createPerfTask,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['perf-tasks'] })
-      setUploadError('')
+  // attemptUpload 既用于采集刚停止时的首次上报，也用于重试队列里积压的
+  // 记录——两种场景都走同一条路径：调用方已经把 item 落进 localStorage
+  // 队列（enqueuePerfUpload），这里只负责"再试一次，成功了就出队"，失败
+  // 不抛错、不清队列，记录留着等下次重试。用 useCallback 包一层是因为下面
+  // 的 mount useEffect 要把 retryPendingUploads 放进依赖数组，不然每次
+  // 渲染都拿到新的函数引用会导致 effect 每次都重跑。
+  const attemptUpload = useCallback(
+    async (item: QueuedPerfUpload) => {
+      try {
+        await createPerfTask(item.payload)
+        removeQueuedPerfUpload(item.id)
+        setPendingUploads((current) => current.filter((pending) => pending.id !== item.id))
+        setUploadError('')
+        queryClient.invalidateQueries({ queryKey: ['perf-tasks'] })
+      } catch (error) {
+        setUploadError(getErrorMessage(error))
+      }
     },
-    onError: (error) => setUploadError(getErrorMessage(error)),
-  })
+    [queryClient],
+  )
+
+  const retryPendingUploads = useCallback(async () => {
+    setRetryingUploads(true)
+    for (const item of loadQueuedPerfUploads()) {
+      await attemptUpload(item)
+    }
+    setRetryingUploads(false)
+  }, [attemptUpload])
+
+  // 页面加载时（包括标签页被关掉又重开、或者上次断网后刷新）自动重试一次
+  // 队列里积压的记录，不用用户手动点。
+  useEffect(() => {
+    retryPendingUploads()
+  }, [retryPendingUploads])
 
   function closeWS() {
     if (wsCleanup.current !== null) {
@@ -200,7 +234,10 @@ export default function PerfTestPage() {
       // 完整的样本集合，不会因为消息顺序问题漏掉最后几个样本。
       const final = await getPerfMonitoringTask(activeTask.task_id)
       setActiveTask(null)
-      uploadMutation.mutate({
+      // 先落进本地待重传队列再尝试上报——就算下面这次请求失败、或者用户在
+      // 请求还没返回时就关掉了标签页，记录已经在 localStorage 里，下次打开
+      // 这个页面会自动重试，不会凭空丢失（见 utils/perfUploadQueue.ts）。
+      const queued = enqueuePerfUpload({
         device_id: final.device_id,
         package_name: final.package_name,
         process_name: final.process_name,
@@ -214,10 +251,28 @@ export default function PerfTestPage() {
         last_error: final.last_error,
         samples: final.samples,
       })
+      setPendingUploads((current) => [...current, queued])
+      await attemptUpload(queued)
     } catch (error) {
       setStartError(getErrorMessage(error))
     }
   }
+
+  const pendingUploadsBanner =
+    pendingUploads.length > 0 ? (
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-200">
+        <span>有 {pendingUploads.length} 条采集记录还没成功上报到中心平台，已保存在本地，不会丢。</span>
+        <button
+          className="btn btn-secondary"
+          disabled={retryingUploads}
+          type="button"
+          onClick={retryPendingUploads}
+        >
+          <RefreshCw size={16} className={retryingUploads ? 'animate-spin' : ''} />
+          重试上报
+        </button>
+      </div>
+    ) : null
 
   if (agentStatus !== 'ready') {
     const heading =
@@ -246,6 +301,7 @@ export default function PerfTestPage() {
 
     return (
       <div className="page-shell">
+        {pendingUploadsBanner}
         <section className="panel panel-body flex flex-col items-center gap-4 py-12 text-center">
           <div className="flex h-14 w-14 items-center justify-center rounded-full bg-amber-50 text-amber-600 ring-1 ring-amber-200">
             <AlertTriangle size={26} />
@@ -282,6 +338,7 @@ export default function PerfTestPage() {
 
   return (
     <div className="page-shell">
+      {pendingUploadsBanner}
       <section className="panel">
         <div className="toolbar">
           <div>
