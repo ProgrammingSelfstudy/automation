@@ -1,8 +1,8 @@
 package webapp
 
 import (
-	"client/web"
 	"encoding/json"
+	"interface-load-test/perf-rabbit/client/web"
 	"io/fs"
 	"net/http"
 	"strings"

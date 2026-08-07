@@ -1,8 +1,8 @@
 package get
 
 import (
-	"client/common"
 	"fmt"
+	"interface-load-test/perf-rabbit/client/common"
 	"regexp"
 	"strconv"
 	"strings"

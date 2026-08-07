@@ -11,20 +11,16 @@ Perf Rabbit is a mobile app performance collector. It runs as a local HTTP serve
 - **Android**: requires `adb` in PATH; uses ADB shell commands (`top`, `dumpsys gfxinfo`, `dumpsys SurfaceFlinger`, etc.)
 - **iOS**: requires Python 3.8+ with `pymobiledevice3` (auto-installs if missing); uses `dvt sysmon` and `dvt graphics` subcommands
 
-## Working Directory
+## Module
 
-All Go commands must be run from `client/`:
-
-```
-cd client
-```
+`perf-rabbit/client` used to be its own Go module (`module client`, independent `go.mod`) during Phase 1-3 of the merge into `automation` — that was a deliberately cheap, reversible decision (see `../docs/architecture-perf-rabbit-merge.md` design principle 5) to defer dealing with dependency overlap until it actually mattered. Phase 4 merged it into the root `interface-load-test` module: its own `go.mod`/`go.sum` are gone, import paths are `interface-load-test/perf-rabbit/client/...`, and all commands below run from the **repo root**, not from `client/`.
 
 ## Commands
 
 ### Run (dev — backend only, no embedded frontend)
 
 ```bash
-go run ./cmd/main.go
+go run ./perf-rabbit/client/cmd/main.go
 ```
 
 Starts on port 9527 (override with `PERF_RABBIT_DEV_PORT`). Does not open a browser.
@@ -34,28 +30,34 @@ Starts on port 9527 (override with `PERF_RABBIT_DEV_PORT`). Does not open a brow
 The frontend must be built first so `web/dist/` is populated before Go embeds it:
 
 ```bash
-# 1. Build frontend (run from client/web/ if it's a separate npm project)
-#    The dist/ output lands at client/web/dist/
+# 1. Build frontend (run from perf-rabbit/client/web/ if it's a separate npm project)
+#    The dist/ output lands at perf-rabbit/client/web/dist/
 
 # 2. Build the Go binary
-go build -o release/perf-rabbit ./cmd/app
+go build -o release/perf-rabbit ./perf-rabbit/client/cmd/app
 ```
 
-### Cross-compile releases
+### Cross-compile the Agent (the platform-integrated entry point, `cmd/main.go`)
+
+```bash
+make perf-agent-build   # from repo root; cross-compiles macOS arm64/amd64 + Windows amd64 into assets/perf-agent/
+```
+
+Or manually, same pattern `cmd/app` release builds use:
 
 ```bash
 # macOS ARM64
-GOOS=darwin GOARCH=arm64 go build -o release/perf-rabbit-mac-arm64 ./cmd/app
+GOOS=darwin GOARCH=arm64 go build -o release/perf-rabbit-mac-arm64 ./perf-rabbit/client/cmd/app
 
 # Windows AMD64
-GOOS=windows GOARCH=amd64 go build -o release/perf-rabbit-windows-amd64.exe ./cmd/app
+GOOS=windows GOARCH=amd64 go build -o release/perf-rabbit-windows-amd64.exe ./perf-rabbit/client/cmd/app
 ```
 
 ### Test
 
 ```bash
-go test ./...                   # all tests
-go test ./internal/perf/...     # single package
+go test ./...                                    # whole repo, including perf-rabbit — one module now
+go test ./perf-rabbit/client/internal/perf/...    # single package
 ```
 
 ### Lint / vet

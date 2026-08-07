@@ -1,6 +1,6 @@
 package start
 
-import "client/internal/perf"
+import "interface-load-test/perf-rabbit/client/internal/perf"
 
 // StartCollectRequest 是开始性能采集的请求参数。
 type StartCollectRequest struct {

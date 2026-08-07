@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"client/common"
+	"interface-load-test/perf-rabbit/client/common"
 )
 
 func TestStartCollectPerfRejectsMalformedJSON(t *testing.T) {

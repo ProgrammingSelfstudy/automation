@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"client/internal/perf/get"
+	"interface-load-test/perf-rabbit/client/internal/perf/get"
 )
 
 // PerformanceData 是一秒内采集到的完整性能数据。

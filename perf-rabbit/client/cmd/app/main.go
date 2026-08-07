@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"client/internal/perf"
-	"client/internal/server"
-	"client/internal/webapp"
+	"interface-load-test/perf-rabbit/client/internal/perf"
+	"interface-load-test/perf-rabbit/client/internal/server"
+	"interface-load-test/perf-rabbit/client/internal/webapp"
 )
 
 func main() {

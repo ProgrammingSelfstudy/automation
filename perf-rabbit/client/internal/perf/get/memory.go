@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strconv"
 
-	"client/common"
+	"interface-load-test/perf-rabbit/client/common"
 )
 
 // MemoryInfo 是应用核心内存指标，单位：KB。

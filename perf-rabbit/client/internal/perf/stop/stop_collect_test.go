@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"client/common"
+	"interface-load-test/perf-rabbit/client/common"
 )
 
 func TestStopCollectPerfRejectsEmptyTaskID(t *testing.T) {

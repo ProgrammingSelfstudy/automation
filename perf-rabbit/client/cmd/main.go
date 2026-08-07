@@ -4,8 +4,8 @@ import (
 	"log"
 	"net/http"
 
-	"client/internal/perf"
-	"client/internal/server"
+	"interface-load-test/perf-rabbit/client/internal/perf"
+	"interface-load-test/perf-rabbit/client/internal/server"
 )
 
 func main() {

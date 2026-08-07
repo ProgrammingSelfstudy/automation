@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"client/common"
+	"interface-load-test/perf-rabbit/client/common"
 )
 
 // GetCollectPerf 查询指定任务已采集的性能数据。

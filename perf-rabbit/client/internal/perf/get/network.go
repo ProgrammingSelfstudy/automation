@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"client/common"
+	"interface-load-test/perf-rabbit/client/common"
 )
 
 // NetworkMetrics 是设备网络流量指标。

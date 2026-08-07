@@ -3,11 +3,11 @@ package server
 import (
 	"net/http"
 
-	"client/internal/device_list"
-	"client/internal/get_device_apps"
-	"client/internal/perf"
-	"client/internal/perf/start"
-	"client/internal/perf/stop"
+	"interface-load-test/perf-rabbit/client/internal/device_list"
+	"interface-load-test/perf-rabbit/client/internal/get_device_apps"
+	"interface-load-test/perf-rabbit/client/internal/perf"
+	"interface-load-test/perf-rabbit/client/internal/perf/start"
+	"interface-load-test/perf-rabbit/client/internal/perf/stop"
 )
 
 func RegisterAPI(mux *http.ServeMux) {

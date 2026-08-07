@@ -1,10 +1,10 @@
 package device_list
 
 import (
-	"client/common"
 	"context"
 	"encoding/json"
 	"errors"
+	"interface-load-test/perf-rabbit/client/common"
 	"log"
 	"net/http"
 	"os/exec"

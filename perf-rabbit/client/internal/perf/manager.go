@@ -1,11 +1,11 @@
 package perf
 
 import (
-	"client/common"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"interface-load-test/perf-rabbit/client/common"
 	"os/exec"
 	"strings"
 	"sync"

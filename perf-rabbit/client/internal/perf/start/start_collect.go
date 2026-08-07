@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"strings"
 
-	"client/common"
-	"client/internal/device_list"
-	"client/internal/perf"
+	"interface-load-test/perf-rabbit/client/common"
+	"interface-load-test/perf-rabbit/client/internal/device_list"
+	"interface-load-test/perf-rabbit/client/internal/perf"
 )
 
 // StartCollectPerf 开始性能采集。

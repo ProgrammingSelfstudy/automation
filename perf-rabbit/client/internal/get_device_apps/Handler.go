@@ -1,10 +1,10 @@
 package get_device_apps
 
 import (
-	"client/common"
-	"client/internal/device_list"
 	"context"
 	"encoding/json"
+	"interface-load-test/perf-rabbit/client/common"
+	"interface-load-test/perf-rabbit/client/internal/device_list"
 	"net/http"
 	"os/exec"
 	"sort"

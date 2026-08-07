@@ -3,7 +3,7 @@ package server
 import (
 	"net/http"
 
-	"client/common"
+	"interface-load-test/perf-rabbit/client/common"
 )
 
 type agentInfo struct {

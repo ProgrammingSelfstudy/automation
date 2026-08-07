@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"client/common"
-	"client/internal/perf"
+	"interface-load-test/perf-rabbit/client/common"
+	"interface-load-test/perf-rabbit/client/internal/perf"
 )
 
 // StopCollectPerf 停止指定性能采集任务。

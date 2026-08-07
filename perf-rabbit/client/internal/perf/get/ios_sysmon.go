@@ -2,11 +2,11 @@ package get
 
 import (
 	"bufio"
-	"client/common"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"interface-load-test/perf-rabbit/client/common"
 	"io"
 	"math"
 	"os"

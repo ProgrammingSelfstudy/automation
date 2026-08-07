@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"client/common"
+	"interface-load-test/perf-rabbit/client/common"
 )
 
 // perfHistoryDir 历史采集文件目录，由 init() 初始化。

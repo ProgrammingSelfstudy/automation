@@ -2,9 +2,9 @@ package get
 
 import (
 	"bufio"
-	"client/common"
 	"context"
 	"fmt"
+	"interface-load-test/perf-rabbit/client/common"
 	"io"
 	"os"
 	"os/exec"
