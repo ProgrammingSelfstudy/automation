@@ -24,24 +24,6 @@ export function computeAppServerSign(
   return md5(signText).toUpperCase()
 }
 
-// parseFormBody turns a rendered application/x-www-form-urlencoded body back
-// into a param map, so the signature can be computed without requiring the
-// interface's body_tpl to already be written in sorted-key order.
-export function parseFormBody(resolvedBody: string): Record<string, string> {
-  const result: Record<string, string> = {}
-  for (const pair of resolvedBody.split('&')) {
-    if (pair === '') {
-      continue
-    }
-    const eq = pair.indexOf('=')
-    if (eq < 0) {
-      continue
-    }
-    result[pair.slice(0, eq)] = pair.slice(eq + 1)
-  }
-  return result
-}
-
 export function randomNonce(byteLength = 16): string {
   const bytes = new Uint8Array(byteLength)
   crypto.getRandomValues(bytes)
