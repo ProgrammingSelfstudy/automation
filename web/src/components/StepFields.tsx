@@ -4,6 +4,7 @@ import { useState } from 'react'
 import type { ScenarioStep } from '../api/client'
 import { decodeFormBody, encodeFormBody } from '../utils/formBody'
 import { parseHeaderText } from '../utils/headers'
+import { md5 } from '../utils/md5'
 import KeyValueEditor from './KeyValueEditor'
 
 const METHODS: ScenarioStep['method'][] = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
@@ -125,6 +126,8 @@ export default function StepFields({ step, onChange }: StepFieldsProps) {
             valuePlaceholder="值，支持 {{.account.xxx}} 变量"
             value={decodeFormBody(step.body_tpl)}
             onChange={(pairs) => updateStep({ body_tpl: encodeFormBody(pairs) })}
+            onEncryptValue={md5}
+            encryptLabel="MD5"
           />
         ) : (
           <textarea
