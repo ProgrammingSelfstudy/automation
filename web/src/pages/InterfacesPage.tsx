@@ -6,10 +6,11 @@ import { createInterface, listEnvironments, listInterfaces, trySendInterface, up
 import type { EnvironmentResponse, InterfaceResponse, ScenarioStep, TrySendInterfaceResponse } from '../api/client'
 import SlideOver from '../components/SlideOver'
 import StepFields from '../components/StepFields'
+import { decodeFormBody } from '../utils/formBody'
 import { formatDateTime, formatNumber, getErrorMessage } from '../utils/format'
 import { loadGlobalHeaders, loadGlobalSignKey, loadGlobalToken } from '../utils/globalVariables'
 import { newScenarioStep } from '../utils/scenario'
-import { computeAppServerSign, parseFormBody, randomNonce } from '../utils/sign'
+import { computeAppServerSign, randomNonce } from '../utils/sign'
 
 export default function InterfacesPage() {
   const queryClient = useQueryClient()
@@ -196,9 +197,16 @@ export default function InterfacesPage() {
       // this component's state (never persisted, never sent to our backend).
       // We compute X-Sign here and send it as a literal header value,
       // matching AppServerSigner.sign() on the target service.
+      //
+      // decodeFormBody, not a raw split on '&'/'=': confirmed against a real
+      // 邮箱账号密码登录 interface (2026-08-08) that the target service signs
+      // over the *decoded* param values (email=test@example.com), not the
+      // wire-encoded body (email=test%40example.com) — signing the encoded
+      // form produced a valid-looking but wrong X-Sign and a 403 every time
+      // the body had a param needing percent-encoding (anything with @, etc).
       const envVariables = environments.find((env) => env.id === previewEnvironmentID)?.variables ?? {}
       const resolvedBody = resolveEnvRefs(stepPayload.body_tpl, { env: envVariables, global: globalScope() })
-      const sign = computeAppServerSign(parseFormBody(resolvedBody), nonce, timestamp, signSecretKey)
+      const sign = computeAppServerSign(decodeFormBody(resolvedBody), nonce, timestamp, signSecretKey)
       stepPayload = {
         ...stepPayload,
         headers: {
